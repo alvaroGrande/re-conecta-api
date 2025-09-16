@@ -21,7 +21,7 @@ app.use(compression());
 
 // Rutas de ejemplo
 app.get("/", (req, res) => {
-  res.json({ message: "API funcionando 🚀" });
+  res.json({ message: "API funcionando y conectada 🚀 " });
 });
 
 import talleresRoutes from "./routes/talleres.js";
