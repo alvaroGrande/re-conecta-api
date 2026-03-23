@@ -1,0 +1,179 @@
+### Worker Resilience Testing
+### Archivo HTTP para probar la resiliencia del sistema de workers
+
+@baseUrl = http://localhost:3000/api
+@token = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjI1YzIxOTUwLTg5YmItNDZkYy05MTY4LWY1Y2U0MzhjMmQwOCIsIm5vbWJyZSI6IkFsdmFybyIsIkFwZWxsaWRvcyI6IkdyYW5kZSIsImZlY2hhX25hY2ltaWVudG8iOm51bGwsImdlbmVybyI6Ik1hc2N1bGlubyIsImxvY2FsaWRhZCI6Ik1hZHJpZCIsInByb3ZpbmNpYSI6Ik1hZHJpZCIsImNvZGlnb19wb3N0YWwiOiIyODA0MSIsImNyZWF0ZWRfYXQiOiIyMDI1LTEwLTIxVDE4OjA0OjE3LjM0MDk2NyswMDowMCIsInJvbCI6MSwiZW1haWwiOiJhbHZhcm8uZ3JhbmRlLmppbWVuZXpAZ21haWwuY29tIiwidGVsZWZvbm8iOm51bGwsImZvdG9fcGVyZmlsIjoiaHR0cHM6Ly91eXpxaWdlbHZoamtvcG95cmNmdC5zdXBhYmFzZS5jby9zdG9yYWdlL3YxL29iamVjdC9wdWJsaWMvYXZhdGFycy9wcm9maWxlLXBob3Rvcy8yNWMyMTk1MC04OWJiLTQ2ZGMtOTE2OC1mNWNlNDM4YzJkMDgtMTc2NjE2NDYyNjgxOC5wbmciLCJ1bHRpbW9JbmljaW8iOiIyMDI2LTAxLTA5VDEyOjU2OjAwLjAyOSswMDowMCIsInVsdGltYV9hY3RpdmlkYWQiOiIyMDI2LTAxLTA5VDEyOjU1OjU5Ljc2OTQ0NiIsImlhdCI6MTc2Nzk2MzM2MCwiZXhwIjoxNzY3OTkyMTYwfQ.aI-c5TSlMrt3UME0n780DRQ4CF_dMXjAL_--LIaP0vU
+
+###############################################
+# 1. Verificar información del worker actual
+###############################################
+
+### Get Worker Info
+GET {{baseUrl}}/test/worker-info
+Authorization: Bearer {{token}}
+
+###############################################
+# 2. Health Check
+###############################################
+
+### Health Check
+GET {{baseUrl}}/test/health
+Authorization: Bearer {{token}}
+
+###############################################
+# 3. Matar Worker - Muerte Limpia (process.exit)
+###############################################
+
+### Kill Worker - Exit (recomendado para primer test)
+POST {{baseUrl}}/test/kill-worker
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "method": "exit",
+  "delay": 1000
+}
+
+###############################################
+# 4. Matar Worker - Error No Manejado
+###############################################
+
+### Kill Worker - Uncaught Exception
+POST {{baseUrl}}/test/kill-worker
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "method": "uncaughtException",
+  "delay": 500
+}
+
+###############################################
+# 5. Matar Worker - Promesa Rechazada
+###############################################
+
+### Kill Worker - Async Error
+POST {{baseUrl}}/test/kill-worker
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "method": "asyncError",
+  "delay": 500
+}
+
+###############################################
+# 6. Matar Worker - Loop Infinito (CUIDADO!)
+###############################################
+
+### Kill Worker - Infinite Loop (bloqueará el worker)
+POST {{baseUrl}}/test/kill-worker
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "method": "infiniteLoop",
+  "delay": 1000
+}
+
+###############################################
+# 7. Matar Worker - Memory Leak (CUIDADO!)
+###############################################
+
+### Kill Worker - Memory Leak (matará el proceso eventualmente)
+POST {{baseUrl}}/test/kill-worker
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "method": "memoryLeak",
+  "delay": 1000
+}
+
+###############################################
+# 8. Stress Test - Carga CPU
+###############################################
+
+### Stress Worker - Low Intensity
+POST {{baseUrl}}/test/stress-worker
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "duration": 5000,
+  "intensity": "low"
+}
+
+### Stress Worker - Medium Intensity
+POST {{baseUrl}}/test/stress-worker
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "duration": 5000,
+  "intensity": "medium"
+}
+
+### Stress Worker - High Intensity (puede bloquear el worker temporalmente)
+POST {{baseUrl}}/test/stress-worker
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "duration": 3000,
+  "intensity": "high"
+}
+
+###############################################
+# 9. Test Secuencial - Verificar Recuperación
+###############################################
+
+### Paso 1: Get worker info (anotar PID)
+GET {{baseUrl}}/test/worker-info
+Authorization: Bearer {{token}}
+
+### Paso 2: Matar worker
+POST {{baseUrl}}/test/kill-worker
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "method": "exit",
+  "delay": 1000
+}
+
+### Paso 3: Esperar 3 segundos y verificar nuevo worker (PID diferente)
+GET {{baseUrl}}/test/worker-info
+Authorization: Bearer {{token}}
+
+### Paso 4: Verificar que la API sigue funcionando
+GET {{baseUrl}}/dashboard/actividad-reciente
+Authorization: Bearer {{token}}
+
+###############################################
+# GUÍA DE USO
+###############################################
+
+# 1. Modo Single Process (USE_CLUSTER=false):
+#    - No habrá restart automático
+#    - El servidor se caerá completamente
+#    - Útil para testing de errores
+
+# 2. Modo Cluster (USE_CLUSTER=true):
+#    - El master detectará la muerte del worker
+#    - Creará un nuevo worker automáticamente
+#    - El servicio seguirá disponible
+#    - Verás en logs: "💀 Worker XXX died... Restarting..."
+
+# RECOMENDACIONES:
+# - Empezar con method=exit y delay=1000
+# - Verificar PID antes y después
+# - No usar infiniteLoop o memoryLeak en producción
+# - Los métodos más seguros son: exit, uncaughtException, asyncError
+
+# QUÉ OBSERVAR:
+# 1. En logs del servidor:
+#    - "💀 Worker XXX died (1). Restarting..."
+#    - "👷 New worker YYY started as replacement"
+# 2. La API debe seguir respondiendo
+# 3. El PID del worker cambiará después del restart

@@ -1,0 +1,197 @@
+# Pruebas de API de Encuestas
+# Archivo para probar los endpoints con herramientas como Thunder Client, Postman, o REST Client
+
+### Variables
+@baseUrl = http://localhost:3000/api
+@token = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjI1YzIxOTUwLTg5YmItNDZkYy05MTY4LWY1Y2U0MzhjMmQwOCIsIm5vbWJyZSI6IkFsdmFybyIsIkFwZWxsaWRvcyI6IkdyYW5kZSIsImZlY2hhX25hY2ltaWVudG8iOm51bGwsImdlbmVybyI6Ik1hc2N1bGlubyIsImxvY2FsaWRhZCI6Ik1hZHJpZCIsInByb3ZpbmNpYSI6Ik1hZHJpZCIsImNvZGlnb19wb3N0YWwiOiIyODA0MSIsImNyZWF0ZWRfYXQiOiIyMDI1LTEwLTIxVDE4OjA0OjE3LjM0MDk2NyswMDowMCIsInJvbCI6MSwiZW1haWwiOiJhbHZhcm8uZ3JhbmRlLmppbWVuZXpAZ21haWwuY29tIiwidGVsZWZvbm8iOm51bGwsImZvdG9fcGVyZmlsIjoiaHR0cHM6Ly91eXpxaWdlbHZoamtvcG95cmNmdC5zdXBhYmFzZS5jby9zdG9yYWdlL3YxL29iamVjdC9wdWJsaWMvYXZhdGFycy9wcm9maWxlLXBob3Rvcy8yNWMyMTk1MC04OWJiLTQ2ZGMtOTE2OC1mNWNlNDM4YzJkMDgtMTc2NjE2NDYyNjgxOC5wbmciLCJ1bHRpbW9JbmljaW8iOiIyMDI2LTAxLTA5VDEyOjU2OjAwLjAyOSswMDowMCIsInVsdGltYV9hY3RpdmlkYWQiOiIyMDI2LTAxLTA5VDEyOjU1OjU5Ljc2OTQ0NiIsImlhdCI6MTc2Nzk2MzM2MCwiZXhwIjoxNzY3OTkyMTYwfQ.aI-c5TSlMrt3UME0n780DRQ4CF_dMXjAL_--LIaP0vU
+
+### 1. Obtener todas las encuestas
+GET {{baseUrl}}/encuestas
+Authorization: Bearer {{token}}
+
+### 2. Obtener encuestas activas
+GET {{baseUrl}}/encuestas?estado=activa
+Authorization: Bearer {{token}}
+
+### 3. Obtener encuestas cerradas
+GET {{baseUrl}}/encuestas?estado=cerrada
+Authorization: Bearer {{token}}
+
+### 4. Obtener una encuesta específica
+GET {{baseUrl}}/encuestas/1
+Authorization: Bearer {{token}}
+
+### 5. Crear encuesta (solo administradores)
+POST {{baseUrl}}/encuestas
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "titulo": "Encuesta de Satisfacción - Taller de Vue.js",
+  "descripcion": "Queremos conocer tu opinión sobre el taller de Vue.js impartido este mes",
+  "fecha_fin": "2025-12-31",
+  "preguntas": [
+    {
+      "texto": "¿Cómo calificarías el contenido del taller?",
+      "tipo": "multiple",
+      "opciones": [
+        { "texto": "Excelente" },
+        { "texto": "Muy bueno" },
+        { "texto": "Bueno" },
+        { "texto": "Regular" }
+      ]
+    },
+    {
+      "texto": "¿El ritmo de la clase fue adecuado?",
+      "tipo": "multiple",
+      "opciones": [
+        { "texto": "Muy rápido" },
+        { "texto": "Adecuado" },
+        { "texto": "Lento" }
+      ]
+    },
+    {
+      "texto": "¿Qué temas adicionales te gustaría aprender?",
+      "tipo": "abierta"
+    }
+  ]
+}
+
+### 6. Responder a una encuesta
+POST {{baseUrl}}/encuestas/1/respuestas
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "respuestas": {
+    "1": [1, 2],
+    "2": "Me gustaría aprender sobre Vuex y Pinia"
+  }
+}
+
+### 7. Obtener resultados de una encuesta
+GET {{baseUrl}}/encuestas/1/resultados
+Authorization: Bearer {{token}}
+
+### 8. Publicar una encuesta (solo administradores)
+PATCH {{baseUrl}}/encuestas/1/publicar
+Authorization: Bearer {{token}}
+
+### 9. Probar error: Crear encuesta sin autenticación
+POST {{baseUrl}}/encuestas
+Content-Type: application/json
+
+{
+  "titulo": "Test sin auth",
+  "descripcion": "Debe fallar",
+  "fecha_fin": "2025-12-31",
+  "preguntas": []
+}
+
+### 10. Probar error: Responder encuesta duplicada
+POST {{baseUrl}}/encuestas/1/respuestas
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "respuestas": {
+    "1": [1]
+  }
+}
+
+### 11. Crear encuesta con fecha pasada (debe fallar)
+POST {{baseUrl}}/encuestas
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "titulo": "Encuesta con fecha inválida",
+  "descripcion": "Esta encuesta no debe crearse",
+  "fecha_fin": "2020-01-01",
+  "preguntas": [
+    {
+      "texto": "Pregunta test",
+      "tipo": "abierta"
+    }
+  ]
+}
+
+### 12. Crear encuesta sin preguntas (debe fallar)
+POST {{baseUrl}}/encuestas
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "titulo": "Encuesta sin preguntas",
+  "descripcion": "Esta no debe crearse",
+  "fecha_fin": "2025-12-31",
+  "preguntas": []
+}
+
+### 13. Crear pregunta múltiple sin opciones (debe fallar)
+POST {{baseUrl}}/encuestas
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "titulo": "Encuesta con error",
+  "descripcion": "Pregunta múltiple sin opciones",
+  "fecha_fin": "2025-12-31",
+  "preguntas": [
+    {
+      "texto": "¿Te gustó?",
+      "tipo": "multiple",
+      "opciones": []
+    }
+  ]
+}
+
+### 14. Crear encuesta compleja con múltiples preguntas
+POST {{baseUrl}}/encuestas
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "titulo": "Evaluación Integral - Plataforma reConecta",
+  "descripcion": "Ayúdanos a mejorar todos los aspectos de nuestra plataforma",
+  "fecha_fin": "2026-01-15",
+  "preguntas": [
+    {
+      "texto": "¿Qué tan satisfecho estás con la plataforma en general?",
+      "tipo": "multiple",
+      "opciones": [
+        { "texto": "Muy satisfecho" },
+        { "texto": "Satisfecho" },
+        { "texto": "Neutral" },
+        { "texto": "Insatisfecho" }
+      ]
+    },
+    {
+      "texto": "¿La navegación es intuitiva?",
+      "tipo": "multiple",
+      "opciones": [
+        { "texto": "Sí, muy fácil" },
+        { "texto": "Aceptable" },
+        { "texto": "Difícil de usar" }
+      ]
+    },
+    {
+      "texto": "¿Qué funcionalidad te gustaría que agreguemos?",
+      "tipo": "abierta"
+    },
+    {
+      "texto": "¿Recomendarías reConecta a otros?",
+      "tipo": "multiple",
+      "opciones": [
+        { "texto": "Definitivamente sí" },
+        { "texto": "Probablemente sí" },
+        { "texto": "No estoy seguro" },
+        { "texto": "Probablemente no" }
+      ]
+    },
+    {
+      "texto": "Comentarios o sugerencias adicionales",
+      "tipo": "abierta"
+    }
+  ]
+}
