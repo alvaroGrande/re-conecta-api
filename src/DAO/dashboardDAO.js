@@ -7,6 +7,8 @@ import { getCached } from "../utils/memoryCache.js";
  * Obtener estadísticas generales del dashboard
  */
 export const obtenerEstadisticasDashboard = async () => {
+  const cacheKey = 'estadisticas_dashboard';
+  return getCached(cacheKey, async () => {
   return executeWithTiming('obtenerEstadisticasDashboard', async () => {
     try {
       const hace24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
@@ -81,6 +83,7 @@ export const obtenerEstadisticasDashboard = async () => {
       throw error;
     }
   });
+  }, 60 * 1000); // 1 min TTL
 };
 
 /**
@@ -159,36 +162,38 @@ export const obtenerEstadisticasEncuestas = async () => {
 
 /**
  * Obtener distribución de usuarios por rol
+ * 3 COUNT queries paralelas en PostgreSQL en lugar de fetch masivo + filtro en JS
  */
 export const obtenerDistribucionRoles = async () => {
-  return executeWithTiming('obtenerDistribucionRoles', async () => {
-    const { data, error } = await supabase
-      .from('appUsers')
-      .select('rol');
+  const cacheKey = 'distribucion_roles';
+  return getCached(cacheKey, async () => {
+    return executeWithTiming('obtenerDistribucionRoles', async () => {
+      const [admins, coordinadores, usuarios] = await Promise.all([
+        supabase.from('appUsers').select('*', { count: 'exact', head: true }).eq('rol', 1),
+        supabase.from('appUsers').select('*', { count: 'exact', head: true }).eq('rol', 2),
+        supabase.from('appUsers').select('*', { count: 'exact', head: true }).eq('rol', 3),
+      ]);
 
-    if (error) throw new Error(error.message);
+      if (admins.error) throw new Error(admins.error.message);
+      if (coordinadores.error) throw new Error(coordinadores.error.message);
+      if (usuarios.error) throw new Error(usuarios.error.message);
 
-    // Contar por roles y devolver como array
-    const conteoRoles = {
-      1: data.filter(u => u.rol === 1).length,
-      2: data.filter(u => u.rol === 2).length,
-      3: data.filter(u => u.rol === 3).length
-    };
-
-    // Retornar en formato array como espera el frontend
-    return [
-      { rol: 1, cantidad: conteoRoles[1] },
-      { rol: 2, cantidad: conteoRoles[2] },
-      { rol: 3, cantidad: conteoRoles[3] }
-    ];
-  });
+      return [
+        { rol: 1, cantidad: admins.count || 0 },
+        { rol: 2, cantidad: coordinadores.count || 0 },
+        { rol: 3, cantidad: usuarios.count || 0 },
+      ];
+    });
+  }, 5 * 60 * 1000); // 5 min TTL
 };
 
 /**
  * Obtener actividad de usuarios de los últimos N días
- * Optimizado: una sola query en lugar de N queries
+ * Cacheado por ventana de días para evitar fetch masivo en cada solicitud
  */
 export const obtenerActividadPorDias = async (dias = 7) => {
+  const cacheKey = `actividad_por_dias_${dias}`;
+  return getCached(cacheKey, async () => {
   return executeWithTiming('obtenerActividadPorDias', async () => {
     const hoy = new Date();
     const fechaInicio = new Date(hoy);
@@ -232,6 +237,7 @@ export const obtenerActividadPorDias = async (dias = 7) => {
 
     return resultado;
   });
+  }, 10 * 60 * 1000); // 10 min TTL — datos de días pasados no cambian frecuentemente
 };
 
 /**
@@ -255,10 +261,14 @@ export const obtenerUsuariosConectados = async () => {
 
 /**
  * Obtener actividad reciente del sistema agrupada por usuario
+ * Cacheado 2 min: reduce carga en tabla actividad_sistema en cada carga del dashboard
  */
 export const obtenerActividadReciente = async (limite = 10) => {
+  const cacheKey = `actividad_reciente_${limite}`;
+  return getCached(cacheKey, async () => {
   return executeWithTiming('obtenerActividadReciente', async () => {
-    // Obtener actividades recientes (últimas 100 para poder agrupar)
+    // Fetch suficientes filas para obtener `limite` usuarios únicos tras la agrupación
+    const sqlLimit = Math.min(limite * 10, 200);
     const { data, error } = await supabase
       .from('actividad_sistema')
       .select(`
@@ -275,7 +285,7 @@ export const obtenerActividadReciente = async (limite = 10) => {
         )
       `)
       .order('created_at', { ascending: false })
-      .limit(100);
+      .limit(sqlLimit);
 
     if (error) {
       logger.warn('Error al obtener actividad reciente, devolviendo array vacío:', error.message);
@@ -325,6 +335,7 @@ export const obtenerActividadReciente = async (limite = 10) => {
 
     return resultado;
   });
+  }, 2 * 60 * 1000); // 2 min TTL
 };
 
 /**

@@ -2,15 +2,19 @@ import {supabase} from "./connection.js";
 import logger from "../logger.js";
 import { executeWithTiming } from "../utils/queryLogger.js";
 import memoryCache from "../utils/memoryCache.js";
-export const obtenerTalleres = async () => {
+export const obtenerTalleres = async ({ page = 1, limit = 50 } = {}) => {
   return executeWithTiming('obtenerTalleres', async () => {
-    const { data, error } = await supabase
-    .from('talleres')
-    .select('*')
-  //   .eq('activo', 1)   // filtra solo activos
-    .order('fecha', { ascending: true })
-    if((error)) throw new Error(error.message);
-    return data;
+    const from = (page - 1) * limit;
+    const to   = from + limit - 1;
+
+    const { data, error, count } = await supabase
+      .from('talleres')
+      .select('*', { count: 'exact' })
+      .order('fecha', { ascending: true })
+      .range(from, to);
+
+    if (error) throw new Error(error.message);
+    return { data, total: count ?? 0, page, limit };
   });
 };
 
@@ -31,7 +35,7 @@ export const crearTaller = async (taller) => {
   return executeWithTiming('crearTaller', async () => {
     logger.debug('crearTaller - datos:', taller);
     // Solo enviar columnas conocidas de la tabla talleres
-    const camposPermitidos = ['titulo', 'descripcion', 'fecha', 'duracion', 'aforo', 'activo', 'modalidad', 'tipo_pago'];
+    const camposPermitidos = ['titulo', 'descripcion', 'fecha', 'duracion', 'aforo', 'activo', 'modalidad', 'tipo_pago', 'creado_por'];
     const datosFiltrados = Object.fromEntries(
       Object.entries(taller).filter(([k]) => camposPermitidos.includes(k))
     );

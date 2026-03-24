@@ -16,8 +16,10 @@ export const getMotivosCancelacion = async (req, res, next) => {
 
 export const getTalleres = async (req, res) => {
   try {
-    const talleres = await talleresDAO.obtenerTalleres();
-    res.json(talleres);
+    const page  = Math.max(1, parseInt(req.query.page)  || 1);
+    const limit = Math.min(200, Math.max(1, parseInt(req.query.limit) || 50));
+    const result = await talleresDAO.obtenerTalleres({ page, limit });
+    res.json(result);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -35,7 +37,11 @@ export const getTallerPorId = async (req, res) => {
 
 export const crearTaller = async (req, res, next) => {
   try {
-    const nuevoTaller = await talleresDAO.crearTaller(req.body);
+    // Inyectar creado_por para rastrear al coordinador o admin que crea el taller
+    const nuevoTaller = await talleresDAO.crearTaller({
+      ...req.body,
+      creado_por: req.user.id,
+    });
 
     dashboardDAO.registrarActividad(
       req.user?.id,

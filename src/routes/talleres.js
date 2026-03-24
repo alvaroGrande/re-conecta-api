@@ -23,6 +23,11 @@ import {
   getTallerArchivadoDetalle,
   patchAsistencia,
 } from "../Controllers/talleresArchivadosController.js";
+import {
+  getDocumentos,
+  subirDocumentoChunk,
+  eliminarDocumento,
+} from "../Controllers/tallerDocumentosController.js";
 
 const router = Router();
 
@@ -38,7 +43,7 @@ router.patch("/archivados/:id/asistencia/:usuarioId", requireRole(1), patchAsist
 // ─── CRUD básico ─────────────────────────────────────────────────────────────
 router.get("/", getTalleres);
 router.get("/:id", getTallerPorId);
-router.post("/", requireRole(1), crearTaller);                // solo admin
+router.post("/", requireRole(1, 2), crearTaller);             // admin y coordinador
 router.patch("/:id", requireRole(1), editarTaller);           // solo admin
 router.delete("/:id", requireRole(1), eliminarTaller);        // solo admin
 router.patch("/:id/activar", requireRole(1), activarTaller);  // solo admin
@@ -54,5 +59,10 @@ router.delete("/:id/inscribir", desinscribirTaller);
 router.get("/:id/inscritos", requireRole(1, 2), getInscritos);
 router.post("/:tallerId/inscribir/:usuarioId", requireRole(1, 2), inscribirUsuarioSupervisor);
 router.delete("/:tallerId/inscribir/:usuarioId", requireRole(1, 2), desinscribirUsuarioSupervisor);
+
+// ─── Documentos PDF ────────────────────────────────────────────────────────────
+router.get("/:id/documentos",                           getDocumentos);         // todos los autenticados
+router.post("/:id/documentos/chunk", requireRole(1, 2), subirDocumentoChunk);  // admin y coordinador
+router.delete("/:id/documentos/:docId", requireRole(1), eliminarDocumento);    // solo admin
 
 export default router;

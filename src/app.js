@@ -49,7 +49,7 @@ app.use(cors({
   exposedHeaders: ['Content-Range', 'X-Content-Range'],
   maxAge: 86400 // Cache preflight por 24 horas
 }));
-app.use(express.json());
+app.use(express.json({ limit: '500kb' }));
 app.use(compression());
 
 
@@ -73,6 +73,7 @@ import dashboardRoutes from "./routes/dashboard.js";
 import tasksRoutes from "./routes/tasks.js";
 import testRoutes from "./routes/test.js";
 import recordatoriosRoutes from "./routes/recordatorios.js";
+import rolesPermisosRoutes from "./routes/rolesPermisos.js";
 app.use("/api/usuarios", usersRoutes);
 app.use("/api/video-calls", videoCallsRoutes);
 app.use("/api/encuestas", encuestasRoutes);
@@ -82,6 +83,7 @@ app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/tasks", tasksRoutes);
 app.use("/api/test", testRoutes);
 app.use("/api/recordatorios", recordatoriosRoutes);
+app.use("/api/roles-permisos", rolesPermisosRoutes);
 
 
 app.use(errorHandler);

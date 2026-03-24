@@ -35,7 +35,7 @@ export const setupSocketIO = (httpServer) => {
   // Eventos de conexión
   io.on('connection', (socket) => {
     const userId = socket.user.id;
-    logger.info(`✓ Usuario conectado: ${socket.user.email} (${userId})`);
+    logger.info(`Usuario conectado: ${socket.user.email} (${userId})`);
 
     // Unir al usuario a su sala personal
     socket.join(`user_${userId}`);

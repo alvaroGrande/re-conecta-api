@@ -1,16 +1,33 @@
 import jwt from 'jsonwebtoken'
 import config from  '../config.js';
+import { tienePermiso } from '../config/rolePermissionsStore.js';
 const { SECRET } = config.JWT;
 
 /**
  * Middleware de roles. Uso: requireRole(1) o requireRole(1, 2)
- * rol 1 = Admin, rol 2 = Supervisor/Monitor
+ * rol 1 = Administrador, rol 2 = Coordinador, rol 3 = Usuario
  */
 export function requireRole(...roles) {
   return (req, res, next) => {
     if (!req.user) return res.status(401).json({ message: 'No autenticado' });
     if (!roles.includes(req.user.rol)) {
       return res.status(403).json({ message: 'Sin permisos suficientes' });
+    }
+    next();
+  };
+}
+
+/**
+ * Middleware de permisos granulares. Uso: requirePermission('talleres:crear')
+ * Permite proteger rutas por acción específica en lugar de solo por rol.
+ * @param {string} permiso - Permiso requerido (ej: 'talleres:crear')
+ */
+export function requirePermission(permiso) {
+  return async (req, res, next) => {
+    if (!req.user) return res.status(401).json({ message: 'No autenticado' });
+    const autorizado = await tienePermiso(req.user.rol, permiso);
+    if (!autorizado) {
+      return res.status(403).json({ message: `Acción no permitida: se requiere el permiso '${permiso}'` });
     }
     next();
   };

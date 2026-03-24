@@ -4,21 +4,27 @@ import * as notificacionesDAO from "../DAO/notificacionesDAO.js";
 import * as userDAO from "../DAO/userDAO.js";
 import logger from '../logger.js';
 
+const esAdmin             = (user) => user?.rol === 1;
+const esAdminOCoordinador = (user) => user?.rol === 1 || user?.rol === 2;
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const esUUID  = (v) => UUID_RE.test(v);
+
 /**
  * Obtener todas las encuestas (con filtros opcionales)
  */
 export const getEncuestas = async (req, res, next) => {
   try {
-    const { estado } = req.query;
+    const { estado, q } = req.query;
     const filtros = {};
 
-    if (estado) {
-      filtros.estado = estado;
-    }
+    if (estado) filtros.estado = estado;
+    if (q?.trim()) filtros.q = q.trim();
 
     // Filtrar por rol del usuario autenticado
     if (req.user) {
       filtros.usuarioRol = req.user.rol;
+      filtros.usuarioId  = req.user.id;
     }
 
     const encuestas = await encuestasDAO.obtenerEncuestas(filtros);
@@ -28,7 +34,7 @@ export const getEncuestas = async (req, res, next) => {
   }
 };
 
-/**
+/**+
  * Obtener una encuesta específica por ID
  */
 export const getEncuestaPorId = async (req, res, next) => {
@@ -50,14 +56,13 @@ export const getEncuestaPorId = async (req, res, next) => {
  */
 export const crearEncuesta = async (req, res, next) => {
   try {
-    // Verificar que el usuario es administrador (rol 1)
-    if (req.user.rol !== 1) {
+    if (!esAdminOCoordinador(req.user)) {
       return res.status(403).json({ 
-        message: "No tienes permisos para crear encuestas. Solo administradores." 
+        message: "No tienes permisos para crear encuestas." 
       });
     }
 
-    const { titulo, descripcion, fecha_fin, rol_objetivo, notificar_admins, notificar_coordinadores, notificar_usuarios, preguntas } = req.body;
+    const { titulo, descripcion, fecha_fin, rol_objetivo, notificar_admins, notificar_coordinadores, notificar_usuarios, usuarios_destino, preguntas } = req.body;
 
     // Validaciones básicas
     if (!titulo || !descripcion || !fecha_fin) {
@@ -116,7 +121,16 @@ export const crearEncuesta = async (req, res, next) => {
       }
     }
 
-    const nuevaEncuesta = await encuestasDAO.crearEncuesta(req.body);
+    // Coordinadores: creado_por = su id; siempre dirigen la encuesta a usuarios (rol 3)
+    // Admins: creado_por = null (distingue encuestas de admin de las de coordinador)
+    const creadoPor       = req.user.rol === 2 ? req.user.id : null;
+    const rolObjetivoFinal = req.user.rol === 2 ? 3 : (rol_objetivo || null);
+
+    const nuevaEncuesta = await encuestasDAO.crearEncuesta({
+      ...req.body,
+      rol_objetivo: rolObjetivoFinal,
+      creado_por: creadoPor
+    });
     
     // Registrar actividad
     try {
@@ -130,50 +144,51 @@ export const crearEncuesta = async (req, res, next) => {
       logger.error({ error }, 'Error al registrar actividad de creación de encuesta');
     }
 
-    // Enviar notificación a todos los usuarios
+    // Enviar notificaciones
     try {
-      const rolesSeleccionados = [];
-      if (notificar_admins) rolesSeleccionados.push(1);
-      if (notificar_coordinadores) rolesSeleccionados.push(2);
-      if (notificar_usuarios) rolesSeleccionados.push(3);
+      let receptoresIds = [];
 
-      // Si no hay roles seleccionados, no enviar notificaciones
-      if (rolesSeleccionados.length === 0) {
-        logger.info('No se seleccionaron roles para notificación de nueva encuesta');
+      if (req.user.rol === 2) {
+        // Coordinador: notificar solo a los usuarios_destino seleccionados (si marcó notificar_usuarios)
+        if (notificar_usuarios && Array.isArray(usuarios_destino) && usuarios_destino.length > 0) {
+          receptoresIds = usuarios_destino.filter(id => id !== req.user.id);
+        }
       } else {
-        // Obtener solo los usuarios de los roles necesarios en la DB, excluyendo al creador
-        // Evita traer toda la tabla a memoria para filtrar en JS
-        const filtrosUsuarios = {};
-        if (rolesSeleccionados.length === 1) {
-          filtrosUsuarios.role = rolesSeleccionados[0];
+        // Admin: lógica por roles
+        const rolesSeleccionados = [];
+        if (notificar_admins) rolesSeleccionados.push(1);
+        if (notificar_coordinadores) rolesSeleccionados.push(2);
+        if (notificar_usuarios) rolesSeleccionados.push(3);
+
+        if (rolesSeleccionados.length > 0) {
+          const filtrosUsuarios = rolesSeleccionados.length === 1 ? { role: rolesSeleccionados[0] } : {};
+          const { data: usuariosFiltrados } = await userDAO.getAllUsers(filtrosUsuarios);
+          receptoresIds = (usuariosFiltrados || [])
+            .filter(u => u.id !== req.user.id && rolesSeleccionados.includes(u.rol))
+            .map(u => u.id);
         }
-        const { data: usuariosFiltrados } = await userDAO.getAllUsers(filtrosUsuarios);
-        const receptoresIds = (usuariosFiltrados || [])
-          .filter(u => u.id !== req.user.id && rolesSeleccionados.includes(u.rol))
-          .map(u => u.id);
+      }
 
-        if (receptoresIds.length > 0) {
-          const notificaciones = await notificacionesDAO.enviarNotificacionMasiva(
-            req.user.id,
-            receptoresIds,
-            {
-              tipo: 'encuesta',
-              titulo: 'Nueva encuesta disponible',
-              contenido: `Hay una nueva encuesta: "${req.body.titulo}". ¡Tu opinión es importante!`,
-              url: `/encuestas?id=${nuevaEncuesta.id}`
-            }
-          );
-
-          // Emitir eventos Socket.IO a cada receptor
-          if (req.io) {
-            notificaciones.forEach(notif => {
-              req.io.to(`user_${notif.receptor_id}`).emit('nueva_notificacion', notif);
-            });
-            logger.info(`${notificaciones.length} notificaciones enviadas para nueva encuesta: ${req.body.titulo}`);
+      if (receptoresIds.length > 0) {
+        const notificaciones = await notificacionesDAO.enviarNotificacionMasiva(
+          req.user.id,
+          receptoresIds,
+          {
+            tipo: 'encuesta',
+            titulo: 'Nueva encuesta disponible',
+            contenido: `Hay una nueva encuesta: "${req.body.titulo}". ¡Tu opinión es importante!`,
+            url: `/encuestas?id=${nuevaEncuesta.id}`
           }
-        } else {
-          logger.info('No hay usuarios con los roles seleccionados para notificar');
+        );
+
+        if (req.io) {
+          notificaciones.forEach(notif => {
+            req.io.to(`user_${notif.receptor_id}`).emit('nueva_notificacion', notif);
+          });
+          logger.info(`${notificaciones.length} notificaciones enviadas para nueva encuesta: ${req.body.titulo}`);
         }
+      } else {
+        logger.info('No se seleccionaron destinatarios para notificación de nueva encuesta');
       }
     } catch (error) {
       logger.error({ error }, 'Error al enviar notificaciones de nueva encuesta');
@@ -191,7 +206,7 @@ export const crearEncuesta = async (req, res, next) => {
  */
 export const responderEncuesta = async (req, res, next) => {
   try {
-    const encuestaId = parseInt(req.params.id);
+    const encuestaId = req.params.id;
     const usuarioId = req.user.id;
     const { respuestas } = req.body;
 
@@ -240,7 +255,7 @@ export const responderEncuesta = async (req, res, next) => {
  */
 export const getResultadosEncuesta = async (req, res, next) => {
   try {
-    const encuestaId = parseInt(req.params.id);
+    const encuestaId = req.params.id;
     const usuarioId = req.user.id;
 
     const resultado = await encuestasDAO.obtenerResultadosEncuesta(
@@ -263,14 +278,13 @@ export const getResultadosEncuesta = async (req, res, next) => {
  */
 export const publicarEncuesta = async (req, res, next) => {
   try {
-    // Verificar que el usuario es administrador
-    if (req.user.rol !== 1) {
+    if (!esAdmin(req.user)) {
       return res.status(403).json({ 
         message: "No tienes permisos para publicar encuestas. Solo administradores." 
       });
     }
 
-    const encuestaId = parseInt(req.params.id);
+    const encuestaId = req.params.id;
     
     // Verificar que la encuesta existe
     const encuesta = await encuestasDAO.obtenerEncuestaPorId(encuestaId);
@@ -306,14 +320,13 @@ export const publicarEncuesta = async (req, res, next) => {
  */
 export const getRespuestasDetalladas = async (req, res, next) => {
   try {
-    // Verificar que el usuario es administrador
-    if (req.user.rol !== 1) {
+    if (!esAdminOCoordinador(req.user)) {
       return res.status(403).json({ 
         message: "No tienes permisos para ver respuestas detalladas. Solo administradores." 
       });
     }
 
-    const encuestaId = parseInt(req.params.id);
+    const encuestaId = req.params.id;
     const respuestas = await encuestasDAO.obtenerRespuestasDetalladas(encuestaId);
 
     res.json(respuestas);
@@ -328,18 +341,14 @@ export const getRespuestasDetalladas = async (req, res, next) => {
  */
 export const getRespuestasDeUsuario = async (req, res, next) => {
   try {
-    if (req.user.rol !== 1) {
+    if (!esAdminOCoordinador(req.user)) {
       return res.status(403).json({
         message: "No tienes permisos para ver respuestas de usuarios. Solo administradores."
       });
     }
 
-    const encuestaId = parseInt(req.params.id);
-    const usuarioId = parseInt(req.params.usuarioId);
-
-    if (isNaN(encuestaId) || isNaN(usuarioId)) {
-      return res.status(400).json({ message: "IDs inválidos" });
-    }
+    const encuestaId = req.params.id;
+    const usuarioId  = req.params.usuarioId;
 
     const respuestas = await encuestasDAO.obtenerRespuestasDeUsuario(encuestaId, usuarioId);
     res.json(respuestas);
@@ -354,14 +363,13 @@ export const getRespuestasDeUsuario = async (req, res, next) => {
  */
 export const cerrarEncuesta = async (req, res, next) => {
   try {
-    // Verificar que el usuario es administrador
-    if (req.user.rol !== 1) {
+    if (!esAdmin(req.user)) {
       return res.status(403).json({ 
         message: "No tienes permisos para cerrar encuestas. Solo administradores." 
       });
     }
 
-    const encuestaId = parseInt(req.params.id);
+    const encuestaId = req.params.id;
     
     // Verificar que la encuesta existe y está activa
     const encuesta = await encuestasDAO.obtenerEncuestaPorId(encuestaId);

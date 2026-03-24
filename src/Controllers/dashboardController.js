@@ -11,8 +11,13 @@ export const getEstadisticas = async (req, res, next) => {
       return res.status(403).json({ message: 'No tienes permisos para ver estadísticas' });
     }
 
-    const estadisticas = await dashboardDAO.obtenerEstadisticasDashboard();
-    res.json(estadisticas);
+    const startTime = Date.now();
+    const resultado = await dashboardDAO.obtenerEstadisticasDashboard();
+    const duration = Date.now() - startTime;
+
+    res.setHeader('X-Cache', resultado.fromCache ? 'HIT' : 'MISS');
+    res.setHeader('X-Response-Time', `${duration}ms`);
+    res.json(resultado.data);
   } catch (error) {
     logger.error(`[DASHBOARD] Error al obtener estadísticas: ${error.message}`);
     next(error);
@@ -121,8 +126,13 @@ export const getDistribucionRoles = async (req, res, next) => {
       return res.status(403).json({ message: 'No tienes permisos' });
     }
 
-    const distribucion = await dashboardDAO.obtenerDistribucionRoles();
-    res.json(distribucion);
+    const startTime = Date.now();
+    const resultado = await dashboardDAO.obtenerDistribucionRoles();
+    const duration = Date.now() - startTime;
+
+    res.setHeader('X-Cache', resultado.fromCache ? 'HIT' : 'MISS');
+    res.setHeader('X-Response-Time', `${duration}ms`);
+    res.json(resultado.data);
   } catch (error) {
     logger.error(`[DASHBOARD] Error al obtener distribución de roles: ${error.message}`);
     next(error);
@@ -139,8 +149,13 @@ export const getActividadPorDias = async (req, res, next) => {
     }
 
     const dias = parseInt(req.query.dias) || 7;
-    const actividad = await dashboardDAO.obtenerActividadPorDias(dias);
-    res.json(actividad);
+    const startTime = Date.now();
+    const resultado = await dashboardDAO.obtenerActividadPorDias(dias);
+    const duration = Date.now() - startTime;
+
+    res.setHeader('X-Cache', resultado.fromCache ? 'HIT' : 'MISS');
+    res.setHeader('X-Response-Time', `${duration}ms`);
+    res.json(resultado.data);
   } catch (error) {
     logger.error(`[DASHBOARD] Error al obtener actividad por días: ${error.message}`);
     next(error);
@@ -184,7 +199,7 @@ export const getActividadReciente = async (req, res, next) => {
 
     const actividad = rawId
       ? await dashboardDAO.obtenerActividadUsuario(rawId, dias)
-      : await dashboardDAO.obtenerActividadReciente(limite);
+      : (await dashboardDAO.obtenerActividadReciente(limite)).data;
 
     res.json(actividad);
   } catch (error) {

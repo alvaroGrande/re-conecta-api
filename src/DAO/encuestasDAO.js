@@ -16,6 +16,7 @@ export const obtenerEncuestas = async (filtros = {}) => {
       .from('encuestas')
       .select(`
         *,
+        creador:appUsers!encuestas_creado_por_fkey(id, nombre, Apellidos),
         preguntas:encuestas_preguntas(
           *,
           opciones:encuestas_opciones(*)
@@ -28,14 +29,57 @@ export const obtenerEncuestas = async (filtros = {}) => {
     if (filtros.estado) {
       const hoy = new Date().toISOString().split('T')[0];
       if (filtros.estado === 'activa') {
-        query = query.gt('fecha_fin', hoy);
+        query = query.gte('fecha_fin', hoy);   // incluye el día de hoy completo
       } else if (filtros.estado === 'cerrada') {
-        query = query.lte('fecha_fin', hoy);
+        query = query.lt('fecha_fin', hoy);    // excluye el día de hoy
       }
     }
 
-    // Filtrar por rol_objetivo en la base de datos (no en memoria)
-    if (filtros.usuarioRol) {
+    // Búsqueda de texto en título y descripción
+    if (filtros.q) {
+      query = query.or(`titulo.ilike.%${filtros.q}%,descripcion.ilike.%${filtros.q}%`);
+    }
+
+    // Filtrar visibilidad según rol:
+    // - Admin (1): ve todo
+    // - Coordinador (2): sus propias encuestas + encuestas de admin para coordinadores/todos
+    // - Usuario (3): encuestas de admin para usuarios/todos + encuestas de sus coordinadores
+    if (filtros.usuarioRol === 1) {
+      // Admin ve todas las encuestas — sin restricción adicional
+    } else if (filtros.usuarioRol === 2 && filtros.usuarioId) {
+      if (filtros.estado === 'cerrada') {
+        // En pasadas: solo las encuestas que el coordinador creó
+        query = query.eq('creado_por', filtros.usuarioId);
+      } else {
+        // En activas: las suyas + encuestas de admin para coordinadores/todos
+        query = query.or(
+          `creado_por.eq.${filtros.usuarioId},` +
+          `and(creado_por.is.null,rol_objetivo.is.null),` +
+          `and(creado_por.is.null,rol_objetivo.eq.2)`
+        );
+      }
+    } else if (filtros.usuarioRol === 3 && filtros.usuarioId) {
+      // Obtener coordinadores asignados al usuario
+      const { data: coordRows } = await supabase
+        .from('usuarios_instructores')
+        .select('instructor_id')
+        .eq('usuario_id', filtros.usuarioId);
+      const coordIds = (coordRows || []).map(r => r.instructor_id);
+
+      if (coordIds.length > 0) {
+        query = query.or(
+          `and(creado_por.is.null,rol_objetivo.is.null),` +
+          `and(creado_por.is.null,rol_objetivo.eq.3),` +
+          `creado_por.in.(${coordIds.join(',')})`
+        );
+      } else {
+        query = query.or(
+          `and(creado_por.is.null,rol_objetivo.is.null),` +
+          `and(creado_por.is.null,rol_objetivo.eq.3)`
+        );
+      }
+    } else if (filtros.usuarioRol) {
+      // Fallback para casos sin usuarioId
       query = query.or(`rol_objetivo.is.null,rol_objetivo.eq.${filtros.usuarioRol}`);
     }
 
@@ -43,12 +87,12 @@ export const obtenerEncuestas = async (filtros = {}) => {
 
     if (error) throw new Error(error.message);
 
-    const hoyMs = new Date().setHours(0, 0, 0, 0);
+    const hoy = new Date().toISOString().split('T')[0];
     return data.map(encuesta => ({
       ...encuesta,
       respuestas: encuesta.respuestas_count?.[0]?.count ?? 0,
       respuestas_count: undefined,
-      estado: new Date(encuesta.fecha_fin) > hoyMs ? 'activa' : 'cerrada'
+      estado: encuesta.fecha_fin >= hoy ? 'activa' : 'cerrada'
     }));
   });
 };
@@ -64,6 +108,7 @@ export const obtenerEncuestaPorId = async (id) => {
       .from('encuestas')
       .select(`
         *,
+        creador:appUsers!encuestas_creado_por_fkey(id, nombre, Apellidos),
         preguntas:encuestas_preguntas(
           *,
           opciones:encuestas_opciones(*)
@@ -83,7 +128,7 @@ export const obtenerEncuestaPorId = async (id) => {
     return {
       ...data,
       respuestas: count || 0,
-      estado: new Date(data.fecha_fin) >= new Date() ? 'activa' : 'cerrada'
+      estado: data.fecha_fin >= new Date().toISOString().split('T')[0] ? 'activa' : 'cerrada'
     };
   });
 };
@@ -95,7 +140,7 @@ export const obtenerEncuestaPorId = async (id) => {
  */
 export const crearEncuesta = async (encuestaData) => {
   return executeWithTiming('crearEncuesta', async () => {
-    const { titulo, descripcion, fecha_fin, rol_objetivo, preguntas } = encuestaData;
+    const { titulo, descripcion, fecha_fin, rol_objetivo, preguntas, creado_por } = encuestaData;
 
     // 1. Crear la encuesta
     const { data: encuesta, error: errorEncuesta } = await supabase
@@ -106,6 +151,7 @@ export const crearEncuesta = async (encuestaData) => {
           descripcion,
           fecha_fin,
           rol_objetivo: rol_objetivo || null,
+          creado_por: creado_por || null,
           fecha_creacion: new Date().toISOString()
         }
       ])
