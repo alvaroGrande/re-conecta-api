@@ -191,3 +191,61 @@ export const eliminarRecordatorio = async (id, usuarioId, rol) => {
     return { id };
   });
 };
+
+/**
+ * Obtener recordatorios pendientes de notificar que empiezan en los próximos `minutosAntes` minutos.
+ * Solo devuelve los que aún no han sido notificados (notificado_at IS NULL)
+ * y cuya fecha+hora está entre ahora y ahora+minutosAntes.
+ *
+ * @param {number} minutosAntes - Ventana de anticipación en minutos
+ * @returns {Array} Recordatorios con datos del usuario propietario
+ */
+export const obtenerRecordatoriosPendientes = async (minutosAntes) => {
+  return executeWithTiming('obtenerRecordatoriosPendientes', async () => {
+    const ahora = new Date();
+    const limite = new Date(ahora.getTime() + minutosAntes * 60 * 1000);
+
+    // Fetch de hoy y mañana (evita escanear toda la tabla)
+    const hoy = ahora.toISOString().slice(0, 10);
+    const manana = limite.toISOString().slice(0, 10);
+
+    const { data, error } = await supabase
+      .from('recordatorios')
+      .select(`
+        *,
+        usuario:appUsers!usuario_id (
+          id,
+          nombre,
+          Apellidos,
+          email
+        )
+      `)
+      .is('notificado_at', null)
+      .gte('fecha', hoy)
+      .lte('fecha', manana);
+
+    if (error) throw new Error('Error al obtener recordatorios pendientes: ' + error.message);
+
+    // Filtrar en JS: el datetime del recordatorio debe estar dentro de la ventana [ahora, limite]
+    return (data || []).filter((rec) => {
+      const dt = new Date(`${rec.fecha}T${rec.hora}`);
+      return dt >= ahora && dt <= limite;
+    });
+  });
+};
+
+/**
+ * Marcar un recordatorio como ya notificado.
+ *
+ * @param {number} id - ID del recordatorio
+ */
+export const marcarRecordatorioNotificado = async (id) => {
+  return executeWithTiming('marcarRecordatorioNotificado', async () => {
+    const { error } = await supabase
+      .from('recordatorios')
+      .update({ notificado_at: new Date().toISOString() })
+      .eq('id', id);
+
+    if (error) throw new Error('Error al marcar recordatorio como notificado: ' + error.message);
+  });
+};

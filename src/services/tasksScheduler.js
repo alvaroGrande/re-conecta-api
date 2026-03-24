@@ -21,7 +21,7 @@ const DIAS_RETENCION_QUERY_LOGS = parseInt(process.env.DIAS_RETENCION_QUERY_LOGS
  * Tarea: Archivar talleres expirados (fecha > 7 días)
  */
 async function tareaArchivarTalleres() {
-  const nombreTarea = 'archivado_talleres';
+  const nombreTarea = 'Archivado Talleres';
   let logInfo;
   try {
     logger.info(`[TAREA PROGRAMADA] Iniciando: ${nombreTarea}`);
