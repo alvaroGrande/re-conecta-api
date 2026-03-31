@@ -14,13 +14,24 @@ export const LOG_CONFIG = {
   REDACT: ['req.headers.authorization', 'res.headers.authorization'],
 }
 
-export const ZOOM = { 
-  SDK_KEY: process.env.ZOOM_SDK_KEY,
-  SDK_SECRET: process.env.ZOOM_SDK_SECRET,
-  ACCOUNT_ID: process.env.ZOOM_ACCOUNT_ID,
-  CLIENT_ID: process.env.ZOOM_CLIENT_ID,
-  CLIENT_SECRET: process.env.ZOOM_CLIENT_SECRET,
-  API_URL: 'https://api.zoom.us/v2'
+export const EMAIL = {
+  SMTP_HOST: process.env.SMTP_HOST,
+  SMTP_PORT: parseInt(process.env.SMTP_PORT) || 587,
+  SMTP_USER: process.env.SMTP_USER,
+  SMTP_PASS: process.env.SMTP_PASS,
+  SMTP_SECURE: process.env.SMTP_SECURE === 'true',
+  FROM: process.env.EMAIL_FROM || 'noreply@re-conecta.com'
 }
 
-export default { JWT, SUPABASE, LOG_CONFIG, ZOOM };
+export const TWILIO = {
+  SID: process.env.TWILIO_SID,
+  TOKEN: process.env.TWILIO_TOKEN,
+  WHATSAPP_NUMBER: process.env.TWILIO_WHATSAPP_NUMBER
+}
+
+export const ZOOM = {
+  API_KEY: process.env.ZOOM_API_KEY,
+  API_SECRET: process.env.ZOOM_API_SECRET
+}
+
+export default { JWT, SUPABASE, LOG_CONFIG, ZOOM, EMAIL, TWILIO };

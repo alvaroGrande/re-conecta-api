@@ -2,6 +2,8 @@ import * as encuestasDAO from "../DAO/encuestasDAO.js";
 import * as dashboardDAO from "../DAO/dashboardDAO.js";
 import * as notificacionesDAO from "../DAO/notificacionesDAO.js";
 import * as userDAO from "../DAO/userDAO.js";
+import { procesarPlantilla } from "../services/notificacionesService.js";
+import { supabase } from "../DAO/connection.js";
 import logger from '../logger.js';
 
 const esAdmin             = (user) => user?.rol === 1;
@@ -144,57 +146,16 @@ export const crearEncuesta = async (req, res, next) => {
       logger.error({ error }, 'Error al registrar actividad de creación de encuesta');
     }
 
-    // Enviar notificaciones
-    try {
-      let receptoresIds = [];
+    // Notificaciones automáticas por nueva encuesta
+    enviarNotificacionesNuevaEncuesta(nuevaEncuesta, req.user, {
+      notificar_admins,
+      notificar_coordinadores,
+      notificar_usuarios,
+      usuarios_destino
+    }).catch(err =>
+      logger.error({ err }, 'Error al enviar notificaciones de nueva encuesta')
+    );
 
-      if (req.user.rol === 2) {
-        // Coordinador: notificar solo a los usuarios_destino seleccionados (si marcó notificar_usuarios)
-        if (notificar_usuarios && Array.isArray(usuarios_destino) && usuarios_destino.length > 0) {
-          receptoresIds = usuarios_destino.filter(id => id !== req.user.id);
-        }
-      } else {
-        // Admin: lógica por roles
-        const rolesSeleccionados = [];
-        if (notificar_admins) rolesSeleccionados.push(1);
-        if (notificar_coordinadores) rolesSeleccionados.push(2);
-        if (notificar_usuarios) rolesSeleccionados.push(3);
-
-        if (rolesSeleccionados.length > 0) {
-          const filtrosUsuarios = rolesSeleccionados.length === 1 ? { role: rolesSeleccionados[0] } : {};
-          const { data: usuariosFiltrados } = await userDAO.getAllUsers(filtrosUsuarios);
-          receptoresIds = (usuariosFiltrados || [])
-            .filter(u => u.id !== req.user.id && rolesSeleccionados.includes(u.rol))
-            .map(u => u.id);
-        }
-      }
-
-      if (receptoresIds.length > 0) {
-        const notificaciones = await notificacionesDAO.enviarNotificacionMasiva(
-          req.user.id,
-          receptoresIds,
-          {
-            tipo: 'encuesta',
-            titulo: 'Nueva encuesta disponible',
-            contenido: `Hay una nueva encuesta: "${req.body.titulo}". ¡Tu opinión es importante!`,
-            url: `/encuestas?id=${nuevaEncuesta.id}`
-          }
-        );
-
-        if (req.io) {
-          notificaciones.forEach(notif => {
-            req.io.to(`user_${notif.receptor_id}`).emit('nueva_notificacion', notif);
-          });
-          logger.info(`${notificaciones.length} notificaciones enviadas para nueva encuesta: ${req.body.titulo}`);
-        }
-      } else {
-        logger.info('No se seleccionaron destinatarios para notificación de nueva encuesta');
-      }
-    } catch (error) {
-      logger.error({ error }, 'Error al enviar notificaciones de nueva encuesta');
-      // No fallar la creación de la encuesta si falla el envío de notificaciones
-    }
-    
     res.status(201).json(nuevaEncuesta);
   } catch (error) {
     next(error);
@@ -407,3 +368,154 @@ export const cerrarEncuesta = async (req, res, next) => {
     next(error);
   }
 };
+
+// ─── Notificaciones automáticas ──────────────────────────────────────────────
+
+/**
+ * Enviar notificaciones automáticas cuando se crea una nueva encuesta
+ * @param {Object} encuesta - Datos de la encuesta creada
+ * @param {Object} creador - Usuario que creó la encuesta
+ * @param {Object} opcionesNotif - Opciones de notificación
+ */
+async function enviarNotificacionesNuevaEncuesta(encuesta, creador, opcionesNotif) {
+  try {
+    let usuarios = [];
+
+    if (creador.rol === 2) {
+      // Coordinador: notificar solo a los usuarios_destino seleccionados
+      if (opcionesNotif.notificar_usuarios && Array.isArray(opcionesNotif.usuarios_destino)) {
+        const { data, error } = await supabase
+          .from('appUsers')
+          .select('id, nombre, Apellidos, email')
+          .in('id', opcionesNotif.usuarios_destino.filter(id => id !== creador.id))
+          .eq('activo', true);
+
+        if (!error && data) usuarios = data;
+      }
+    } else {
+      // Admin: lógica por roles
+      const rolesSeleccionados = [];
+      if (opcionesNotif.notificar_admins) rolesSeleccionados.push(1);
+      if (opcionesNotif.notificar_coordinadores) rolesSeleccionados.push(2);
+      if (opcionesNotif.notificar_usuarios) rolesSeleccionados.push(3);
+
+      if (rolesSeleccionados.length > 0) {
+        const { data, error } = await supabase
+          .from('appUsers')
+          .select('id, nombre, Apellidos, email, rol')
+          .in('rol', rolesSeleccionados)
+          .neq('id', creador.id)
+          .eq('activo', true);
+
+        if (!error && data) usuarios = data;
+      }
+    }
+
+    if (!usuarios.length) {
+      logger.info('No hay usuarios para notificar nueva encuesta');
+      return;
+    }
+
+    // Preparar variables para plantilla
+    const variables = {
+      titulo: encuesta.titulo,
+      descripcion: encuesta.descripcion || 'Sin descripción',
+      creador: `${creador.nombre} ${creador.Apellidos || ''}`.trim(),
+      url: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/encuestas?id=${encuesta.id}`
+    };
+
+    // Enviar notificación push a todos los usuarios seleccionados
+    const notificacionesPush = usuarios.map(usuario => ({
+      emisor_id: creador.id,
+      receptor_id: usuario.id,
+      tipo: 'nueva_encuesta',
+      titulo: `Nueva encuesta: ${encuesta.titulo}`,
+      contenido: `Hay una nueva encuesta "${encuesta.titulo}". ¡Tu opinión es importante!`,
+      url: `/encuestas?id=${encuesta.id}`,
+      canal: 'push'
+    }));
+
+    // Crear notificaciones push
+    await Promise.allSettled(
+      notificacionesPush.map(notif => notificacionesDAO.crearNotificacion(notif))
+    );
+
+    // Para email y WhatsApp, verificar configuraciones de usuario
+    const usuariosConConfig = await Promise.all(
+      usuarios.map(async (usuario) => {
+        const configs = await notificacionesDAO.obtenerConfigNotificaciones(usuario.id);
+        return { ...usuario, configs };
+      })
+    );
+
+    // Enviar emails si están configurados
+    const usuariosEmail = usuariosConConfig.filter(u =>
+      u.configs.some(c => c.tipo_evento === 'nueva_encuesta' && c.canal === 'email' && c.activo)
+    );
+
+    if (usuariosEmail.length > 0) {
+      const notificacionesEmail = usuariosEmail.map(usuario => ({
+        emisor_id: creador.id,
+        receptor_id: usuario.id,
+        tipo: 'nueva_encuesta',
+        titulo: `Nueva encuesta disponible: ${encuesta.titulo}`,
+        contenido: '', // Se procesará con plantilla
+        url: variables.url,
+        canal: 'email',
+        plantilla_codigo: 'nueva_encuesta',
+        variables
+      }));
+
+      // Crear y encolar notificaciones email
+      await Promise.allSettled(
+        notificacionesEmail.map(async (notif) => {
+          const creada = await notificacionesDAO.crearNotificacion(notif);
+          await notificacionesDAO.encolarNotificacion(creada.id, 2);
+        })
+      );
+    }
+
+    // Enviar WhatsApp si están configurados
+    const usuariosWhatsApp = usuariosConConfig.filter(u =>
+      u.configs.some(c => c.tipo_evento === 'nueva_encuesta' && c.canal === 'whatsapp' && c.activo)
+    );
+
+    if (usuariosWhatsApp.length > 0) {
+      const notificacionesWhatsApp = usuariosWhatsApp.map(usuario => ({
+        emisor_id: creador.id,
+        receptor_id: usuario.id,
+        tipo: 'nueva_encuesta',
+        titulo: `Nueva encuesta: ${encuesta.titulo}`,
+        contenido: '', // Se procesará con plantilla
+        url: variables.url,
+        canal: 'whatsapp',
+        plantilla_codigo: 'nueva_encuesta_whatsapp',
+        variables: { ...variables, nombre: usuario.nombre }
+      }));
+
+      // Crear y encolar notificaciones WhatsApp
+      await Promise.allSettled(
+        notificacionesWhatsApp.map(async (notif) => {
+          const creada = await notificacionesDAO.crearNotificacion(notif);
+          await notificacionesDAO.encolarNotificacion(creada.id, 3); // Prioridad alta
+        })
+      );
+    }
+
+    logger.info({
+      type: 'notificaciones_nueva_encuesta',
+      encuestaId: encuesta.id,
+      totalUsuarios: usuarios.length,
+      pushEnviados: notificacionesPush.length,
+      emailsEncolados: usuariosEmail.length,
+      whatsappEncolados: usuariosWhatsApp.length
+    }, 'Notificaciones de nueva encuesta enviadas');
+
+  } catch (error) {
+    logger.error({
+      type: 'error_notificaciones_nueva_encuesta',
+      encuestaId: encuesta.id,
+      error: error.message
+    }, 'Error al enviar notificaciones de nueva encuesta');
+  }
+}

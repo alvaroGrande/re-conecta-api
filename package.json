@@ -9,6 +9,8 @@
     "start:single": "node src/server.js",
     "start:cluster": "node src/cluster.js",
     "start:prod": "NODE_ENV=production node src/cluster.js",
+    "worker:notificaciones": "node src/workers/notificacionesWorker.js",
+    "test:notificaciones": "node scripts/test-notificaciones.js",
     "seed:users": "node src/scripts/seedUsers.js"
   },
   "keywords": [],
@@ -17,6 +19,7 @@
   "type": "module",
   "dependencies": {
     "@supabase/supabase-js": "^2.57.4",
+    "@vercel/analytics": "^2.0.1",
     "axios": "^1.12.2",
     "compression": "^1.8.1",
     "cors": "^2.8.5",
@@ -25,10 +28,12 @@
     "express-rate-limit": "^8.1.0",
     "jsonwebtoken": "^9.0.2",
     "node-cron": "^4.2.1",
+    "nodemailer": "^8.0.4",
     "pino": "^10.1.0",
     "pino-http": "^11.0.0",
     "pino-pretty": "^13.1.2",
-    "socket.io": "^4.8.1"
+    "socket.io": "^4.8.1",
+    "twilio": "^5.13.1"
   },
   "devDependencies": {
     "nodemon": "^3.1.10"

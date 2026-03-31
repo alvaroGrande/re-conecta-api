@@ -84,6 +84,8 @@ app.use("/api/tasks", tasksRoutes);
 app.use("/api/test", testRoutes);
 app.use("/api/recordatorios", recordatoriosRoutes);
 app.use("/api/roles-permisos", rolesPermisosRoutes);
+import lovRoutes from "./routes/lov.js";
+app.use("/api/lov", lovRoutes);
 
 
 app.use(errorHandler);

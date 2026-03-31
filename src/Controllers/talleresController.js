@@ -2,8 +2,27 @@ import * as talleresDAO from "../DAO/talleresDAO.js";
 import * as dashboardDAO from "../DAO/dashboardDAO.js";
 import * as notificacionesDAO from "../DAO/notificacionesDAO.js";
 import * as motivosDAO from "../DAO/motivosCancelacionDAO.js";
+import { getValoresByCategoria } from "../DAO/lovDAO.js";
 import { supabase } from "../DAO/connection.js";
 import logger from '../logger.js';
+
+async function validarLOVs(modalidad, tipo_pago, res) {
+  const [cursos, pagos] = await Promise.all([
+    getValoresByCategoria('tipo_curso'),
+    getValoresByCategoria('tipo_pago'),
+  ])
+  const codigosCursos = cursos.map(v => v.codigo)
+  const codigosPagos  = pagos.map(v => v.codigo)
+  if (modalidad && !codigosCursos.includes(modalidad)) {
+    res.status(400).json({ error: `Modalidad "${modalidad}" no válida. Valores permitidos: ${codigosCursos.join(', ')}` })
+    return false
+  }
+  if (tipo_pago && !codigosPagos.includes(tipo_pago)) {
+    res.status(400).json({ error: `Tipo de pago "${tipo_pago}" no válido. Valores permitidos: ${codigosPagos.join(', ')}` })
+    return false
+  }
+  return true
+}
 
 export const getMotivosCancelacion = async (req, res, next) => {
   try {
@@ -37,6 +56,9 @@ export const getTallerPorId = async (req, res) => {
 
 export const crearTaller = async (req, res, next) => {
   try {
+    const { modalidad, tipo_pago } = req.body
+    if (!await validarLOVs(modalidad, tipo_pago, res)) return
+
     // Inyectar creado_por para rastrear al coordinador o admin que crea el taller
     const nuevoTaller = await talleresDAO.crearTaller({
       ...req.body,
@@ -50,6 +72,11 @@ export const crearTaller = async (req, res, next) => {
       `Creó el taller: ${req.body.titulo || 'Sin título'}`
     ).catch(err => logger.error({ err }, 'Error al registrar actividad de taller'));
 
+    // Notificaciones automáticas por nuevo taller
+    enviarNotificacionesNuevoTaller(nuevoTaller, req.user).catch(err =>
+      logger.error({ err }, 'Error al enviar notificaciones de nuevo taller')
+    );
+
     res.status(201).json(nuevoTaller);
   } catch (error) {
     next(error);
@@ -58,6 +85,9 @@ export const crearTaller = async (req, res, next) => {
 
 export const editarTaller = async (req, res, next) => {
   try {
+    const { modalidad, tipo_pago } = req.body
+    if (!await validarLOVs(modalidad, tipo_pago, res)) return
+
     const tallerEditado = await talleresDAO.editarTaller(req.params.id, req.body);
     if (!tallerEditado) return res.status(404).json({ message: "Taller no encontrado" });
 
@@ -236,6 +266,136 @@ export const inscribirUsuarioSupervisor = async (req, res, next) => {
     next(error);
   }
 };
+
+// ─── Notificaciones automáticas ──────────────────────────────────────────────
+
+/**
+ * Enviar notificaciones automáticas cuando se crea un nuevo taller
+ * @param {Object} taller - Datos del taller creado
+ * @param {Object} creador - Usuario que creó el taller
+ */
+async function enviarNotificacionesNuevoTaller(taller, creador) {
+  try {
+    // Obtener todos los usuarios activos (excluyendo al creador)
+    const { data: usuarios, error } = await supabase
+      .from('appUsers')
+      .select('id, nombre, Apellidos, email')
+      .neq('id', creador.id)
+      .eq('activo', true);
+
+    if (error || !usuarios?.length) {
+      logger.warn({ error }, 'No se pudieron obtener usuarios para notificaciones de nuevo taller');
+      return;
+    }
+
+    // Preparar variables para plantilla
+    const variables = {
+      titulo: taller.titulo,
+      descripcion: taller.descripcion || 'Sin descripción',
+      fecha: new Date(taller.fecha).toLocaleDateString('es-ES'),
+      duracion: taller.duracion,
+      aforo: taller.aforo,
+      modalidad: taller.modalidad,
+      tipo_pago: taller.tipo_pago,
+      creador: `${creador.nombre} ${creador.Apellidos || ''}`.trim(),
+      url: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/talleres`
+    };
+
+    // Enviar notificación push a todos los usuarios
+    const notificacionesPush = usuarios.map(usuario => ({
+      emisor_id: creador.id,
+      receptor_id: usuario.id,
+      tipo: 'nuevo_taller',
+      titulo: `Nuevo taller: ${taller.titulo}`,
+      contenido: `Se ha publicado un nuevo taller "${taller.titulo}" para el ${variables.fecha}. ¡Échale un vistazo!`,
+      url: `/talleres`,
+      canal: 'push'
+    }));
+
+    // Crear notificaciones push (no se encolan, se envían inmediatamente)
+    await Promise.allSettled(
+      notificacionesPush.map(notif => notificacionesDAO.crearNotificacion(notif))
+    );
+
+    // Para email y WhatsApp, verificar configuraciones de usuario
+    const usuariosConConfig = await Promise.all(
+      usuarios.map(async (usuario) => {
+        const configs = await notificacionesDAO.obtenerConfigNotificaciones(usuario.id);
+        return { ...usuario, configs };
+      })
+    );
+
+    // Enviar emails si están configurados
+    const usuariosEmail = usuariosConConfig.filter(u =>
+      u.configs.some(c => c.tipo_evento === 'nuevo_taller' && c.canal === 'email' && c.activo)
+    );
+
+    if (usuariosEmail.length > 0) {
+      const notificacionesEmail = usuariosEmail.map(usuario => ({
+        emisor_id: creador.id,
+        receptor_id: usuario.id,
+        tipo: 'nuevo_taller',
+        titulo: `Nuevo taller disponible: ${taller.titulo}`,
+        contenido: '', // Se procesará con plantilla
+        url: variables.url,
+        canal: 'email',
+        plantilla_codigo: 'nuevo_taller',
+        variables
+      }));
+
+      // Crear y encolar notificaciones email
+      await Promise.allSettled(
+        notificacionesEmail.map(async (notif) => {
+          const creada = await notificacionesDAO.crearNotificacion(notif);
+          await notificacionesDAO.encolarNotificacion(creada.id, 2); // Prioridad normal
+        })
+      );
+    }
+
+    // Enviar WhatsApp si están configurados
+    const usuariosWhatsApp = usuariosConConfig.filter(u =>
+      u.configs.some(c => c.tipo_evento === 'nuevo_taller' && c.canal === 'whatsapp' && c.activo)
+    );
+
+    if (usuariosWhatsApp.length > 0) {
+      const notificacionesWhatsApp = usuariosWhatsApp.map(usuario => ({
+        emisor_id: creador.id,
+        receptor_id: usuario.id,
+        tipo: 'nuevo_taller',
+        titulo: `Nuevo taller: ${taller.titulo}`,
+        contenido: '', // Se procesará con plantilla
+        url: variables.url,
+        canal: 'whatsapp',
+        plantilla_codigo: 'nuevo_taller_whatsapp',
+        variables: { ...variables, nombre: usuario.nombre }
+      }));
+
+      // Crear y encolar notificaciones WhatsApp
+      await Promise.allSettled(
+        notificacionesWhatsApp.map(async (notif) => {
+          const creada = await notificacionesDAO.crearNotificacion(notif);
+          await notificacionesDAO.encolarNotificacion(creada.id, 3); // Prioridad alta para WhatsApp
+        })
+      );
+    }
+
+    logger.info({
+      type: 'notificaciones_nuevo_taller',
+      tallerId: taller.id,
+      totalUsuarios: usuarios.length,
+      pushEnviados: notificacionesPush.length,
+      emailsEncolados: usuariosEmail.length,
+      whatsappEncolados: usuariosWhatsApp.length
+    }, 'Notificaciones de nuevo taller enviadas');
+
+  } catch (error) {
+    logger.error({
+      type: 'error_notificaciones_nuevo_taller',
+      tallerId: taller.id,
+      error: error.message
+    }, 'Error al enviar notificaciones de nuevo taller');
+  }
+}
 
 /**
  * Monitor/Admin desinscribe a un usuario de un taller.
