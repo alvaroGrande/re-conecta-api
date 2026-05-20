@@ -249,3 +249,129 @@ export const marcarRecordatorioNotificado = async (id) => {
     if (error) throw new Error('Error al marcar recordatorio como notificado: ' + error.message);
   });
 };
+
+// ============================================================
+//  Recordatorios automáticos de talleres (inteligentes)
+// ============================================================
+
+/**
+ * Obtener talleres que necesitan recordatorios automáticos.
+ * Devuelve talleres cuya fecha de inicio está dentro de la ventana indicada
+ * y que todavía no han recibido el tipo de recordatorio solicitado.
+ *
+ * @param {'24h'|'1h'|'10min'} tipo
+ * @param {number} minutosVentana  - Cuántos minutos antes del taller se revisa este tipo
+ * @returns {Array} Talleres con inscripciones de usuarios
+ */
+export const obtenerTalleresPendientesRecordatorio = async (tipo, minutosVentana) => {
+  return executeWithTiming('obtenerTalleresPendientesRecordatorio', async () => {
+    const ahora   = new Date();
+    const margen  = 60 * 1000;                                      // ±1 min tolerancia
+    const inicio  = new Date(ahora.getTime() + minutosVentana * 60 * 1000 - margen);
+    const fin     = new Date(ahora.getTime() + minutosVentana * 60 * 1000 + margen);
+
+    // IDs de talleres que ya tienen este tipo notificado
+    const { data: yaNotificados, error: errN } = await supabase
+      .from('recordatorios_talleres')
+      .select('taller_id')
+      .eq('tipo', tipo)
+      .not('notificado_en', 'is', null);
+
+    if (errN) throw new Error('Error al consultar recordatorios_talleres: ' + errN.message);
+
+    const idsExcluir = (yaNotificados || []).map(r => r.taller_id);
+
+    let query = supabase
+      .from('talleres')
+      .select(`
+        id,
+        titulo,
+        fecha,
+        duracion,
+        inscripciones:taller_inscripciones(
+          usuario_id
+        )
+      `)
+      .eq('activo', true)
+      .gte('fecha', inicio.toISOString())
+      .lte('fecha', fin.toISOString());
+
+    if (idsExcluir.length > 0) {
+      query = query.not('id', 'in', `(${idsExcluir.map(id => `"${id}"`).join(',')})`);
+    }
+
+    const { data, error } = await query;
+    if (error) throw new Error('Error al obtener talleres para recordatorio: ' + error.message);
+    return data || [];
+  });
+};
+
+/**
+ * Obtener talleres que acaban de terminar (para enviar encuesta post-taller).
+ * Un taller "terminó" cuando `fecha + duracion` está dentro de la última 1 minuto
+ * y no se ha enviado el recordatorio post_taller aún.
+ *
+ * @param {number} toleranciaMin  - Ventana de detección en minutos (default 2)
+ * @returns {Array} Talleres finalizados con inscripciones
+ */
+export const obtenerTalleresFinalizados = async (toleranciaMin = 2) => {
+  return executeWithTiming('obtenerTalleresFinalizados', async () => {
+    const ahora = new Date();
+
+    // Obtener talleres activos recientes (los de la última semana pueden haber terminado ahora)
+    const { data: talleres, error } = await supabase
+      .from('talleres')
+      .select(`
+        id,
+        titulo,
+        fecha,
+        duracion,
+        inscripciones:taller_inscripciones(
+          usuario_id
+        )
+      `)
+      .eq('activo', true)
+      .gte('fecha', new Date(ahora.getTime() - 24 * 60 * 60 * 1000).toISOString())
+      .lte('fecha', ahora.toISOString());
+
+    if (error) throw new Error('Error al obtener talleres finalizados: ' + error.message);
+
+    // IDs que ya tienen post_taller notificado
+    const { data: yaNotificados } = await supabase
+      .from('recordatorios_talleres')
+      .select('taller_id')
+      .eq('tipo', 'post_taller')
+      .not('notificado_en', 'is', null);
+
+    const idsExcluir = new Set((yaNotificados || []).map(r => r.taller_id));
+
+    // Filtrar en JS: el taller terminó dentro de la tolerancia
+    const toleranciaMs = toleranciaMin * 60 * 1000;
+    return (talleres || []).filter(t => {
+      if (idsExcluir.has(t.id)) return false;
+      const inicio = new Date(t.fecha);
+      const fin = new Date(inicio.getTime() + (t.duracion || 60) * 60 * 1000);
+      return fin <= ahora && (ahora - fin) <= toleranciaMs;
+    });
+  });
+};
+
+/**
+ * Marcar un recordatorio de taller como notificado.
+ * Hace upsert para crear el registro si no existe aún.
+ *
+ * @param {number} tallerId
+ * @param {'24h'|'1h'|'10min'|'post_taller'} tipo
+ */
+export const marcarRecordatorioTallerNotificado = async (tallerId, tipo) => {
+  return executeWithTiming('marcarRecordatorioTallerNotificado', async () => {
+    const { error } = await supabase
+      .from('recordatorios_talleres')
+      .upsert(
+        { taller_id: tallerId, tipo, notificado_en: new Date().toISOString() },
+        { onConflict: 'taller_id,tipo' }
+      );
+
+    if (error) throw new Error('Error al marcar recordatorio de taller: ' + error.message);
+  });
+};

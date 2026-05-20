@@ -6,6 +6,7 @@ import { errorHandler } from "./middlewares/errorHandler.js";
 import compression from "compression"
 import { rateLimit } from 'express-rate-limit'
 import { verifyToken } from "./middlewares/auth.js";
+import { isDbConnected } from "./utils/dbHealth.js";
 
 
 const limiter = rateLimit({
@@ -52,6 +53,13 @@ app.use(cors({
 app.use(express.json({ limit: '500kb' }));
 app.use(compression());
 
+// Bloquear peticiones si la base de datos no está disponible
+app.use((req, res, next) => {
+  if (!isDbConnected()) {
+    return res.status(503).json({ error: 'Servicio no disponible: sin conexión a la base de datos. Intenta de nuevo en unos momentos.' });
+  }
+  next();
+});
 
 // Rutas de ejemplo
 app.get("/", (req, res) => {
@@ -86,6 +94,10 @@ app.use("/api/recordatorios", recordatoriosRoutes);
 app.use("/api/roles-permisos", rolesPermisosRoutes);
 import lovRoutes from "./routes/lov.js";
 app.use("/api/lov", lovRoutes);
+import busquedaRoutes from "./routes/busqueda.js";
+app.use("/api/busqueda", busquedaRoutes);
+import chatRoutes from "./routes/chat.js";
+app.use("/api/chat", chatRoutes);
 
 
 app.use(errorHandler);

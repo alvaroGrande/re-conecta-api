@@ -2,6 +2,7 @@ import cron from 'node-cron';
 import logger from '../logger.js';
 import * as tasksDAO from '../DAO/tasksDAO.js';
 import { archivarTalleresExpirados } from '../DAO/talleresDAO.js';
+import { archivarChatsInactivos, archivarChatsEfimerosExpirados } from '../DAO/chatDAO.js';
 
 // Configuración: cambiar a '0 1 * * *' para producción (1 AM diario)
 const CRON_ARCHIVADO_TESTING = '*/3 * * * *'; // Cada 3 minutos (TESTING)
@@ -11,11 +12,91 @@ const CRON_ARCHIVADO_PRODUCCION = '0 1 * * *'; // 1 AM diario (PRODUCCIÓN)
 const CRON_TALLERES_TESTING = '*/2 * * * *';    // Cada 2 minutos (TESTING)
 const CRON_TALLERES_PRODUCCION = '0 3 * * *';   // 3 AM diario (PRODUCCIÓN)
 
+// Archivado de chats inactivos
+const CRON_CHATS_TESTING = '*/5 * * * *';       // Cada 5 minutos (TESTING)
+const CRON_CHATS_PRODUCCION = '0 4 * * *';      // 4 AM diario (PRODUCCIÓN)
+const DIAS_INACTIVIDAD_CHAT = parseInt(process.env.DIAS_INACTIVIDAD_CHAT) || 30;
+
+// Archivado de chats efímeros expirados
+const CRON_EFIMEROS_TESTING = '*/2 * * * *';    // Cada 2 minutos (TESTING)
+const CRON_EFIMEROS_PRODUCCION = '*/30 * * * *'; // Cada 30 minutos (PRODUCCIÓN)
+
 // Variable para controlar el modo
 const MODO_TESTING = process.env.TASKS_TESTING_MODE === 'true';
 const DIAS_RETENCION = parseInt(process.env.DIAS_RETENCION_ACTIVIDADES) || 90;
 const DIAS_ARCHIVO_TOTAL = parseInt(process.env.DIAS_ARCHIVO_TOTAL) || 365;
 const DIAS_RETENCION_QUERY_LOGS = parseInt(process.env.DIAS_RETENCION_QUERY_LOGS) || 30;
+
+/**
+ * Tarea: Archivar chats efímeros cuyo TTL ha expirado.
+ * Se ejecuta frecuentemente para que la caducidad sea precisa.
+ */
+async function tareaArchivarChatsEfimeros(io = null) {
+  const nombreTarea = 'Archivado Chats Efímeros';
+  let logInfo;
+  try {
+    logger.info(`[TAREA PROGRAMADA] Iniciando: ${nombreTarea}`);
+    logInfo = await tasksDAO.registrarInicioTarea(nombreTarea);
+
+    const { archivados, ids } = await archivarChatsEfimerosExpirados();
+
+    // Notificar a los miembros vía WebSocket si io está disponible
+    if (io && ids.length > 0) {
+      for (const chatId of ids) {
+        io.to(`chat_${chatId}`).emit('chat:expirado', {
+          chatId,
+          mensaje: 'Este chat efímero ha caducado y ha sido archivado.'
+        });
+      }
+    }
+
+    const mensaje = archivados === 0
+      ? 'No hay chats efímeros expirados para archivar'
+      : `${archivados} chat(s) efímero(s) archivado(s) por expiración de TTL`;
+
+    await tasksDAO.registrarFinTarea(logInfo.id, {
+      registrosProcesados: archivados,
+      registrosArchivados: archivados,
+      mensaje,
+      detalles: { ids, fechaEjecucion: new Date().toISOString() }
+    }, logInfo.timestampInicio);
+
+    if (archivados > 0) logger.info(`[TAREA PROGRAMADA] ${nombreTarea} completada: ${mensaje}`);
+  } catch (error) {
+    logger.error(`[TAREA PROGRAMADA] Error en ${nombreTarea}:`, error);
+    if (logInfo) await tasksDAO.registrarErrorTarea(logInfo.id, error, logInfo.timestampInicio);
+  }
+}
+
+/**
+ * Tarea: Archivar chats inactivos (sin mensajes desde hace N días)
+ */
+async function tareaArchivarChats() {
+  const nombreTarea = 'Archivado Chats';
+  let logInfo;
+  try {
+    logger.info(`[TAREA PROGRAMADA] Iniciando: ${nombreTarea}`);
+    logInfo = await tasksDAO.registrarInicioTarea(nombreTarea);
+
+    const { archivados } = await archivarChatsInactivos(DIAS_INACTIVIDAD_CHAT);
+
+    const mensaje = archivados === 0
+      ? `No hay chats inactivos (>${DIAS_INACTIVIDAD_CHAT} dias) para archivar`
+      : `${archivados} chat(s) archivado(s) por inactividad (>${DIAS_INACTIVIDAD_CHAT} dias)`;
+
+    await tasksDAO.registrarFinTarea(logInfo.id, {
+      registrosProcesados: archivados,
+      registrosArchivados: archivados,
+      mensaje,
+      detalles: { diasInactividad: DIAS_INACTIVIDAD_CHAT, fechaEjecucion: new Date().toISOString() }
+    }, logInfo.timestampInicio);
+
+    logger.info(`[TAREA PROGRAMADA] ${nombreTarea} completada: ${mensaje}`);
+  } catch (error) {
+    logger.error(`[TAREA PROGRAMADA] Error en ${nombreTarea}:`, error);
+    if (logInfo) await tasksDAO.registrarErrorTarea(logInfo.id, error, logInfo.timestampInicio);
+  }
+}
 
 /**
  * Tarea: Archivar talleres expirados (fecha > 7 días)
@@ -153,7 +234,20 @@ async function tareaLimpiarQueryLogs() {
 /**
  * Inicializar todas las tareas programadas
  */
-export function inicializarTareasProgramadas() {
+// Referencias a todas las tareas programadas (para poder pausarlas/reanudarlas)
+const cronTasks = [];
+
+export function detenerTareasProgramadas() {
+  cronTasks.forEach(task => task.stop());
+  logger.warn('[TAREAS PROGRAMADAS] Todas las tareas han sido detenidas por perdida de conexion con la base de datos.');
+}
+
+export function reanudarTareasProgramadas() {
+  cronTasks.forEach(task => task.start());
+  logger.info('[TAREAS PROGRAMADAS] Todas las tareas han sido reanudadas tras recuperar la conexion con la base de datos.');
+}
+
+export function inicializarTareasProgramadas(io = null) {
   const cronExpression = MODO_TESTING ? CRON_ARCHIVADO_TESTING : CRON_ARCHIVADO_PRODUCCION;
   const cronQueryLogs = '0 2 * * *'; // Diariamente a las 2:00 AM
   
@@ -170,32 +264,51 @@ export function inicializarTareasProgramadas() {
 
   // Tarea de archivado de talleres expirados
   const cronTalleres = MODO_TESTING ? CRON_TALLERES_TESTING : CRON_TALLERES_PRODUCCION;
-  cron.schedule(cronTalleres, async () => {
+  cronTasks.push(cron.schedule(cronTalleres, async () => {
     await tareaArchivarTalleres();
-  }, { timezone: 'Europe/Madrid' });
+  }, { timezone: 'Europe/Madrid' }));
 
   logger.info('Tarea programada: Archivado de talleres expirados');
   logger.info(`  Programacion: ${MODO_TESTING ? 'Cada 90 segundos (testing)' : 'Diariamente a las 3:00 AM'}`);
 
   // Tarea de archivado de actividades
-  cron.schedule(cronExpression, async () => {
+  cronTasks.push(cron.schedule(cronExpression, async () => {
     await tareaArchivarActividades();
   }, {
     timezone: 'Europe/Madrid'
-  });
+  }));
 
   logger.info('Tarea programada: Archivado de actividades');
   logger.info(`  Programacion: ${MODO_TESTING ? 'Cada 3 minutos' : 'Diariamente a la 1:00 AM'}`);
 
   // Tarea de limpieza de query logs
-  cron.schedule(cronQueryLogs, async () => {
+  cronTasks.push(cron.schedule(cronQueryLogs, async () => {
     await tareaLimpiarQueryLogs();
   }, {
     timezone: 'Europe/Madrid'
-  });
+  }));
 
   logger.info('Tarea programada: Limpieza de query logs');
   logger.info(`  Programacion: Diariamente a las 2:00 AM`);
+
+  // Tarea de archivado de chats inactivos
+  const cronChats = MODO_TESTING ? CRON_CHATS_TESTING : CRON_CHATS_PRODUCCION;
+  cronTasks.push(cron.schedule(cronChats, async () => {
+    await tareaArchivarChats();
+  }, { timezone: 'Europe/Madrid' }));
+
+  logger.info('Tarea programada: Archivado de chats inactivos');
+  logger.info(`  Programacion: ${MODO_TESTING ? 'Cada 5 minutos (testing)' : 'Diariamente a las 4:00 AM'}`);
+  logger.info(`  Dias de inactividad: ${DIAS_INACTIVIDAD_CHAT} dias (configurable con DIAS_INACTIVIDAD_CHAT)`);
+
+  // Tarea de archivado de chats efímeros expirados
+  const cronEfimeros = MODO_TESTING ? CRON_EFIMEROS_TESTING : CRON_EFIMEROS_PRODUCCION;
+  cronTasks.push(cron.schedule(cronEfimeros, async () => {
+    await tareaArchivarChatsEfimeros(io);
+  }, { timezone: 'Europe/Madrid' }));
+
+  logger.info('Tarea programada: Archivado de chats efimeros expirados');
+  logger.info(`  Programacion: ${MODO_TESTING ? 'Cada 2 minutos (testing)' : 'Cada 30 minutos'}`);
 
   // Ejecutar inmediatamente si estamos en modo testing
   if (MODO_TESTING) {
@@ -221,6 +334,12 @@ export async function ejecutarTareaManual(nombreTarea) {
       break;
     case 'limpieza_query_logs':
       await tareaLimpiarQueryLogs();
+      break;
+    case 'archivado_chats':
+      await tareaArchivarChats();
+      break;
+    case 'archivado_chats_efimeros':
+      await tareaArchivarChatsEfimeros();
       break;
     default:
       throw new Error(`Tarea no encontrada: ${nombreTarea}`);

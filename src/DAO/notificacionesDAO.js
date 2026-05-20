@@ -1,6 +1,7 @@
 import { supabase } from "./connection.js";
 import logger from "../logger.js";
 import { executeWithTiming } from "../utils/queryLogger.js";
+import { getCached, memoryCache } from "../utils/memoryCache.js";
 
 /**
  * Crear una nueva notificación (extendida para múltiples canales)
@@ -54,6 +55,9 @@ export const crearNotificacion = async (notificacion) => {
       .single();
 
     if (error) throw new Error("Error al crear notificación: " + error.message);
+
+    // Invalidar caché de enviadas del emisor al crear nueva notificación
+    memoryCache.delete(`notif:enviadas:${notificacion.emisor_id}`);
 
     return data;
   });
@@ -187,12 +191,10 @@ export const actualizarConfigNotificacion = async (usuarioId, tipoEvento, canal,
   return executeWithTiming('actualizarConfigNotificacion', async () => {
     const { data, error } = await supabase
       .from('notificaciones_config')
-      .upsert({
-        usuario_id: usuarioId,
-        tipo_evento: tipoEvento,
-        canal: canal,
-        activo: activo
-      })
+      .upsert(
+        { usuario_id: usuarioId, tipo_evento: tipoEvento, canal: canal, activo: activo },
+        { onConflict: 'usuario_id,tipo_evento,canal' }
+      )
       .select()
       .single();
 
@@ -448,27 +450,37 @@ export const eliminarNotificacionesAntiguas = async (diasAntiguedad = 30) => {
  * @param {number} limite - Límite de notificaciones a devolver
  * @returns {Array} Lista de notificaciones enviadas
  */
-export const obtenerNotificacionesEnviadas = async (usuarioId, limite = 50) => {
+export const obtenerNotificacionesEnviadas = async (usuarioId, limite = 20, offset = 0) => {
   return executeWithTiming('obtenerNotificacionesEnviadas', async () => {
-    const { data, error } = await supabase
-      .from('notificaciones')
-      .select(`
-        *,
-        receptor:appUsers!receptor_id (
-          id,
-          nombre,
-          Apellidos,
-          email,
-          rol
-        )
-      `)
-      .eq('emisor_id', usuarioId)
-      .order('created_at', { ascending: false })
-      .limit(limite);
+    const consulta = async () => {
+      const { data, error } = await supabase
+        .from('notificaciones')
+        .select(`
+          *,
+          receptor:appUsers!receptor_id (
+            id,
+            nombre,
+            Apellidos,
+            email,
+            rol
+          )
+        `)
+        .eq('emisor_id', usuarioId)
+        .order('created_at', { ascending: false })
+        .range(offset, offset + limite - 1);
 
-    if (error) throw new Error(error.message);
+      if (error) throw new Error(error.message);
+      return data;
+    };
 
-    return data;
+    // Solo cachear el primer bloque (offset 0, hasta 100 resultados)
+    if (offset === 0 && limite <= 100) {
+      const cacheKey = `notif:enviadas:${usuarioId}`;
+      const { data } = await getCached(cacheKey, consulta, 300);
+      return data;
+    }
+
+    return consulta();
   });
 };
 

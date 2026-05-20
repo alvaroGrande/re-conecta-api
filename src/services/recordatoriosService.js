@@ -11,7 +11,13 @@
  */
 import cron from 'node-cron';
 import logger from '../logger.js';
-import { obtenerRecordatoriosPendientes, marcarRecordatorioNotificado } from '../DAO/recordatoriosDAO.js';
+import {
+  obtenerRecordatoriosPendientes,
+  marcarRecordatorioNotificado,
+  obtenerTalleresPendientesRecordatorio,
+  obtenerTalleresFinalizados,
+  marcarRecordatorioTallerNotificado,
+} from '../DAO/recordatoriosDAO.js';
 import { crearNotificacion } from '../DAO/notificacionesDAO.js';
 
 const MINUTOS_ANTES = parseInt(process.env.RECORDATORIO_MINUTOS_ANTES || '15', 10);
@@ -94,10 +100,125 @@ export function inicializarServicioRecordatorios(io) {
   logger.info(`  Anticipacion configurada : ${MINUTOS_ANTES} minutos`);
   logger.info(`  Frecuencia de comprobacion: cada minuto`);
   logger.info(`  Variable de entorno       : RECORDATORIO_MINUTOS_ANTES= ${MINUTOS_ANTES}`);
+  logger.info('  Recordatorios de talleres : 24h / 1h / 10min / post-taller');
   logger.info('==================================================\n');
 
-  // Ejecutar cada minuto
+  // Recordatorios personales (cada minuto)
   cron.schedule('* * * * *', () => procesarRecordatorios(io), {
     timezone: process.env.TZ || 'Europe/Madrid',
   });
+
+  // Recordatorios inteligentes de talleres (cada minuto)
+  cron.schedule('* * * * *', () => procesarRecordatoriosTalleres(io), {
+    timezone: process.env.TZ || 'Europe/Madrid',
+  });
+}
+
+// ============================================================
+//  Recordatorios inteligentes de talleres
+// ============================================================
+
+/** Ventanas de recordatorio: tipo → minutos antes del taller */
+const VENTANAS_TALLER = [
+  { tipo: '24h',   minutos: 24 * 60 },
+  { tipo: '1h',    minutos: 60 },
+  { tipo: '10min', minutos: 10 },
+];
+
+function textoVentana(tipo) {
+  if (tipo === '24h')   return '24 horas';
+  if (tipo === '1h')    return '1 hora';
+  if (tipo === '10min') return '10 minutos';
+  return tipo;
+}
+
+/**
+ * Procesa los recordatorios automáticos de talleres:
+ * - 24 horas antes: avisa a todos los inscritos
+ * - 1 hora antes: avisa a todos los inscritos
+ * - 10 minutos antes: avisa a todos los inscritos
+ * - Post-taller: invita a completar la encuesta de satisfacción
+ */
+async function procesarRecordatoriosTalleres(io) {
+  try {
+    // 1. Recordatorios previos al taller (24h, 1h, 10min)
+    for (const ventana of VENTANAS_TALLER) {
+      const talleres = await obtenerTalleresPendientesRecordatorio(ventana.tipo, ventana.minutos);
+
+      for (const taller of talleres) {
+        const inscritos = (taller.inscripciones || []).map(i => i.usuario_id);
+        if (inscritos.length === 0) {
+          await marcarRecordatorioTallerNotificado(taller.id, ventana.tipo);
+          continue;
+        }
+
+        const emisorId = SISTEMA_USER_ID;
+        if (!emisorId) {
+          logger.warn('[RECORDATORIOS_TALLERES] SISTEMA_USER_ID no configurado — omitiendo notificaciones de taller');
+          continue;
+        }
+
+        const titulo   = `⏰ Taller en ${textoVentana(ventana.tipo)}`;
+        const contenido = `"${taller.titulo}" comienza en ${textoVentana(ventana.tipo)}.`;
+
+        for (const usuarioId of inscritos) {
+          try {
+            const notif = await crearNotificacion({
+              emisor_id:   emisorId,
+              receptor_id: usuarioId,
+              tipo:        'recordatorio',
+              titulo,
+              contenido,
+              url:         `/talleres`,
+            });
+
+            if (io) io.to(`user_${usuarioId}`).emit('nueva_notificacion', notif);
+          } catch (err) {
+            logger.error(`[RECORDATORIOS_TALLERES] Error notificando usuario ${usuarioId}:`, err);
+          }
+        }
+
+        await marcarRecordatorioTallerNotificado(taller.id, ventana.tipo);
+        logger.info(`[RECORDATORIOS_TALLERES] ${ventana.tipo} → taller #${taller.id} "${taller.titulo}" → ${inscritos.length} usuario(s) notificado(s)`);
+      }
+    }
+
+    // 2. Post-taller: invitación a encuesta de satisfacción
+    const finalizados = await obtenerTalleresFinalizados(2);
+    for (const taller of finalizados) {
+      const inscritos = (taller.inscripciones || []).map(i => i.usuario_id);
+      if (inscritos.length === 0) {
+        await marcarRecordatorioTallerNotificado(taller.id, 'post_taller');
+        continue;
+      }
+
+      const emisorId = SISTEMA_USER_ID;
+      if (!emisorId) continue;
+
+      const titulo    = `📋 ¿Cómo fue el taller?`;
+      const contenido = `El taller "${taller.titulo}" ha finalizado. ¡Comparte tu opinión en la encuesta de satisfacción!`;
+
+      for (const usuarioId of inscritos) {
+        try {
+          const notif = await crearNotificacion({
+            emisor_id:   emisorId,
+            receptor_id: usuarioId,
+            tipo:        'recordatorio',
+            titulo,
+            contenido,
+            url:         `/encuestas`,
+          });
+
+          if (io) io.to(`user_${usuarioId}`).emit('nueva_notificacion', notif);
+        } catch (err) {
+          logger.error(`[RECORDATORIOS_TALLERES] Error notificando post_taller usuario ${usuarioId}:`, err);
+        }
+      }
+
+      await marcarRecordatorioTallerNotificado(taller.id, 'post_taller');
+      logger.info(`[RECORDATORIOS_TALLERES] post_taller → taller #${taller.id} "${taller.titulo}" → ${inscritos.length} invitación(es) a encuesta`);
+    }
+  } catch (err) {
+    logger.error('[RECORDATORIOS_TALLERES] Error general en procesarRecordatoriosTalleres:', err);
+  }
 }

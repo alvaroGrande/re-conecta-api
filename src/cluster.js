@@ -1,7 +1,8 @@
 import cluster from 'cluster';
 import os from 'os';
 import logger from './logger.js';
-import { inicializarTareasProgramadas } from './services/tasksScheduler.js';
+import { inicializarTareasProgramadas, detenerTareasProgramadas, reanudarTareasProgramadas } from './services/tasksScheduler.js';
+import { registrarCallbacksPausa } from './utils/dbHealth.js';
 
 const numCPUs = os.cpus().length;
 const useCluster = process.env.USE_CLUSTER === 'true';
@@ -12,9 +13,12 @@ const workersCount = process.env.CLUSTER_WORKERS
 if (!useCluster) {
   // Modo single process
   logger.info('Running in SINGLE PROCESS mode (USE_CLUSTER=false)');
-  await import('./server.js');
+  const serverModule = await import('./server.js');
+  // Obtener io desde el módulo server para pasarlo al scheduler
+  const io = serverModule.getIO ? serverModule.getIO() : null;
   // Inicializar tareas programadas en modo single process
-  inicializarTareasProgramadas();
+  inicializarTareasProgramadas(io);
+  registrarCallbacksPausa(detenerTareasProgramadas, reanudarTareasProgramadas);
 } else if (cluster.isPrimary) {
   logger.info(`Master process ${process.pid} is running`);
   logger.info(`System has ${numCPUs} CPU cores available`);
@@ -31,6 +35,7 @@ if (!useCluster) {
   // Inicializar tareas programadas SOLO en el proceso primario
   logger.info('Initializing scheduled tasks in primary process...');
   inicializarTareasProgramadas();
+  registrarCallbacksPausa(detenerTareasProgramadas, reanudarTareasProgramadas);
 
   // Manejar workers que mueren
   cluster.on('exit', (worker, code, signal) => {

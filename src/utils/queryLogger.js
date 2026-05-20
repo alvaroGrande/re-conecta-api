@@ -72,7 +72,7 @@ export const executeWithTiming = async (queryName, queryFn, thresholds = {}) => 
     return result;
   } catch (error) {
     const duration = Date.now() - startTime;
-    logger.error(`[X] ERROR [${queryName}] después de ${duration}ms: ${error.message}`);
+    logger.error(`[X] ERROR [${queryName}] despues de ${duration}ms: ${error.message}`);
     throw error;
   }
 };

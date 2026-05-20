@@ -1,11 +1,21 @@
-import 'dotenv/config'
+import dotenv from 'dotenv'
+import { resolve } from 'path'
+import { fileURLToPath } from 'url'
+import { dirname } from 'path'
+
+const __dirname = dirname(fileURLToPath(import.meta.url))
+const env = process.env.NODE_ENV || 'development'
+const envMap = { development: '.env.local', qa: '.env.qa', production: '.env.production' }
+const envFile = envMap[env] || '.env.local'
+dotenv.config({ path: resolve(__dirname, '..', envFile) })
+
 export const JWT = {
   SECRET: process.env.JWT_SECRET
 };
 
 export const SUPABASE = {
   KEY : process.env.SUPABASE_KEY,
-  URL : 'https://uyzqigelvhjkopoyrcft.supabase.co'
+  URL : process.env.SUPABASE_URL || 'https://uyzqigelvhjkopoyrcft.supabase.co'
 }
 
 export const LOG_CONFIG = {

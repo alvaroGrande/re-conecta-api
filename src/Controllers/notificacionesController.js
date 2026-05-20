@@ -159,12 +159,16 @@ export const eliminarNotificacion = async (req, res, next) => {
 export const getNotificacionesEnviadas = async (req, res, next) => {
   try {
     const usuarioId = req.user.id;
-    const { limit } = req.query;
-    const limite = limit ? parseInt(limit) : 50;
+    const limite = req.query.limit ? parseInt(req.query.limit) : 20;
+    const offset = req.query.offset ? parseInt(req.query.offset) : 0;
 
-    const notificaciones = await notificacionesDAO.obtenerNotificacionesEnviadas(usuarioId, limite);
+    const notificaciones = await notificacionesDAO.obtenerNotificacionesEnviadas(usuarioId, limite, offset);
 
-    res.json(notificaciones);
+    res.json({
+      items: notificaciones,
+      hasMore: notificaciones.length === limite,
+      offset: offset + notificaciones.length
+    });
   } catch (error) {
     next(error);
   }

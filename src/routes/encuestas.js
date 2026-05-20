@@ -10,18 +10,30 @@ import {
   getRespuestasDeUsuario,
   cerrarEncuesta
 } from "../Controllers/encuestasController.js";
+import {
+  getPlantillas,
+  getPlantillaPorId,
+  crearPlantilla,
+  actualizarPlantilla,
+  eliminarPlantilla,
+  crearEncuestaDesde,
+} from "../Controllers/encuestasPlantillasController.js";
 
 const router = Router();
 
-// Rutas públicas (requieren autenticación pero no permisos especiales)
+// ── Plantillas (deben ir antes de /:id para evitar conflictos) ──
+router.get("/plantillas",            getPlantillas);
+router.get("/plantillas/:id",        getPlantillaPorId);
+router.post("/plantillas",           crearPlantilla);
+router.put("/plantillas/:id",        actualizarPlantilla);
+router.delete("/plantillas/:id",     eliminarPlantilla);
+router.post("/plantillas/:id/crear-encuesta", crearEncuestaDesde);
+
+// ── Encuestas ──
 router.get("/", getEncuestas);
 router.get("/:id", getEncuestaPorId);
 router.get("/:id/resultados", getResultadosEncuesta);
-
-// Responder a una encuesta (cualquier usuario autenticado)
 router.post("/:id/respuestas", responderEncuesta);
-
-// Rutas de administrador (verificación de rol dentro del controlador)
 router.post("/", crearEncuesta);
 router.patch("/:id/publicar", publicarEncuesta);
 router.get("/:id/respuestas-detalladas", getRespuestasDetalladas);
