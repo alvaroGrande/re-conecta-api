@@ -32,7 +32,7 @@ ALTER TABLE talleres
 ADD COLUMN IF NOT EXISTS fecha_fin TIMESTAMP;
 
 -- 4. Índices para mejorar rendimiento de queries del dashboard
-CREATE INDEX IF NOT EXISTS idx_appusers_ultimo_inicio ON "appUsers"("ultimoInicio" DESC);
+CREATE INDEX IF NOT EXISTS idx_appusers_last_login ON "appUsers"(ultimo_inicio DESC);
 CREATE INDEX IF NOT EXISTS idx_appusers_ultima_actividad ON "appUsers"(ultima_actividad DESC);
 CREATE INDEX IF NOT EXISTS idx_appusers_rol ON "appUsers"(rol);
 
@@ -46,8 +46,8 @@ CREATE INDEX IF NOT EXISTS idx_encuestas_fecha_fin ON encuestas(fecha_fin);
 CREATE OR REPLACE FUNCTION registrar_actividad_usuario()
 RETURNS TRIGGER AS $$
 BEGIN
-  -- Actualizar ultima_actividad cuando cambia ultimoInicio
-  IF NEW."ultimoInicio" IS DISTINCT FROM OLD."ultimoInicio" THEN
+  -- Actualizar ultima_actividad cuando cambia ultimo_inicio
+  IF NEW.ultimo_inicio IS DISTINCT FROM OLD.ultimo_inicio THEN
     NEW.ultima_actividad = NOW();
     
     -- Registrar en log de actividad
@@ -69,14 +69,14 @@ DROP TRIGGER IF EXISTS trigger_actividad_login ON "appUsers";
 CREATE TRIGGER trigger_actividad_login
   BEFORE UPDATE ON "appUsers"
   FOR EACH ROW
-  WHEN (NEW."ultimoInicio" IS DISTINCT FROM OLD."ultimoInicio")
+  WHEN (NEW.ultimo_inicio IS DISTINCT FROM OLD.ultimo_inicio)
   EXECUTE FUNCTION registrar_actividad_usuario();
 
 -- 6. Vista materializada para estadísticas rápidas (opcional, mejor rendimiento)
 CREATE MATERIALIZED VIEW IF NOT EXISTS dashboard_stats AS
 SELECT 
   (SELECT COUNT(*) FROM "appUsers") as total_usuarios,
-  (SELECT COUNT(*) FROM "appUsers" WHERE "ultimoInicio" >= NOW() - INTERVAL '24 hours') as usuarios_activos_24h,
+  (SELECT COUNT(*) FROM "appUsers" WHERE ultimo_inicio >= NOW() - INTERVAL '24 hours') as usuarios_activos_24h,
   (SELECT COUNT(*) FROM "appUsers" WHERE ultima_actividad >= NOW() - INTERVAL '5 minutes') as usuarios_conectados,
   (SELECT COUNT(*) FROM talleres WHERE activo = 1) as talleres_activos,
   (SELECT COUNT(*) FROM talleres WHERE fecha >= DATE_TRUNC('month', CURRENT_DATE)) as talleres_mes,

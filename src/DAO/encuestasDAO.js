@@ -1,7 +1,7 @@
 import { supabase } from "./connection.js";
 import logger from "../logger.js";
 import { executeWithTiming } from "../utils/queryLogger.js";
-import memoryCache from "../utils/memoryCache.js";
+import memoryCache from "../utils/cache.js";
 
 /**
  * Obtener todas las encuestas con sus preguntas y opciones
@@ -161,7 +161,7 @@ export const crearEncuesta = async (encuestaData) => {
     if (errorEncuesta) throw new Error("Error al crear encuesta: " + errorEncuesta.message);
 
     // Invalidar caché de estadísticas de encuestas
-    memoryCache.delete('estadisticas_encuestas');
+    await memoryCache.delete('estadisticas_encuestas');
     logger.debug('Cache invalidado: nueva encuesta creada');
 
     // 2. Crear las preguntas asociadas
@@ -293,8 +293,8 @@ export const crearRespuestaEncuesta = async (encuestaId, usuarioId, respuestas) 
     }
 
     // Invalidar cachés relacionados con esta encuesta
-    memoryCache.delete('estadisticas_encuestas');
-    memoryCache.delete(`respuestas_detalladas_${encuestaId}`);
+    await memoryCache.delete('estadisticas_encuestas');
+    await memoryCache.delete(`respuestas_detalladas_${encuestaId}`);
     logger.debug('Cache invalidado: nueva respuesta a encuesta');
 
     return {
@@ -320,7 +320,7 @@ export const obtenerResultadosEncuesta = async (encuestaId, usuarioId = null) =>
 
     // Si la encuesta está cerrada, intentar obtener del caché
     if (encuestaCerrada) {
-      const cached = memoryCache.get(cacheKey);
+      const cached = await memoryCache.get(cacheKey);
       if (cached) {
         logger.info(`[CACHE HIT] Resultados de encuesta cerrada ${encuestaId} obtenidos del caché`);
         
@@ -394,7 +394,7 @@ export const obtenerResultadosEncuesta = async (encuestaId, usuarioId = null) =>
         }
       });
       if (encuestaCerrada) {
-        memoryCache.set(cacheKey, resultados, null);
+        await memoryCache.set(cacheKey, resultados, null);
         logger.info(`[CACHED INDEFINIDO] Resultados de encuesta cerrada ${encuestaId}`);
       }
       return { yaRespondida, resultados, fromCache: false };
@@ -425,7 +425,7 @@ export const obtenerResultadosEncuesta = async (encuestaId, usuarioId = null) =>
 
     // Si la encuesta está cerrada, cachear indefinidamente
     if (encuestaCerrada) {
-      memoryCache.set(cacheKey, resultados, null);
+      await memoryCache.set(cacheKey, resultados, null);
       logger.info(`[CACHED INDEFINIDO] Resultados de encuesta cerrada ${encuestaId}`);
     }
 
@@ -508,7 +508,7 @@ export const obtenerRespuestasDetalladas = async (encuestaId) => {
 
     // Si la encuesta está cerrada, intentar obtener del caché
     if (encuestaCerrada) {
-      const cached = memoryCache.get(cacheKey);
+      const cached = await memoryCache.get(cacheKey);
       if (cached) {
         logger.info(`[CACHE HIT] Respuestas detalladas de encuesta cerrada ${encuestaId} obtenidas del caché`);
         return cached;
@@ -540,11 +540,11 @@ export const obtenerRespuestasDetalladas = async (encuestaId) => {
 
     // Si la encuesta está cerrada, cachear indefinidamente
     if (encuestaCerrada) {
-      memoryCache.set(cacheKey, respuestas, null); // null = indefinido
+      await memoryCache.set(cacheKey, respuestas, null); // null = indefinido
       logger.info(`[CACHED INDEFINIDO] Respuestas detalladas de encuesta cerrada ${encuestaId}`);
     } else {
       // Si está activa, cachear por 1 minuto (pueden llegar nuevas respuestas)
-      memoryCache.set(cacheKey, respuestas, 60 * 1000); // 1 minuto
+      await memoryCache.set(cacheKey, respuestas, 60 * 1000); // 1 minuto
       logger.debug(`[CACHED 1min] Respuestas detalladas de encuesta activa ${encuestaId}`);
     }
 
@@ -576,8 +576,8 @@ export const cerrarEncuesta = async (encuestaId) => {
     // Invalidar cachés para que se recalculen con estado cerrado
     const cacheKeyResultados = `resultados_encuesta_${encuestaId}`;
     const cacheKeyRespuestas = `respuestas_detalladas_${encuestaId}`;
-    memoryCache.delete(cacheKeyResultados);
-    memoryCache.delete(cacheKeyRespuestas);
+    await memoryCache.delete(cacheKeyResultados);
+    await memoryCache.delete(cacheKeyRespuestas);
     logger.info(`[CACHE INVALIDADO] Encuesta ${encuestaId} cerrada manualmente`);
 
     return data;

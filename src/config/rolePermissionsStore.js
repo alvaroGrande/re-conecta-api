@@ -7,7 +7,7 @@
  * manualmente al guardar o restaurar permisos.
  * La entrada aparece en el panel CacheAdmin bajo la clave 'roles:permisos'.
  */
-import { memoryCache } from '../utils/memoryCache.js';
+import { memoryCache } from '../utils/cache.js';
 import { supabase } from '../DAO/connection.js';
 import { PERMISOS, PERMISOS_POR_ROL } from './permissions.js';
 import logger from '../logger.js';
@@ -34,11 +34,11 @@ async function cargarCache() {
 }
 
 async function getCache() {
-  let mapa = memoryCache.get(CACHE_KEY);
+  let mapa = await memoryCache.get(CACHE_KEY);
   if (!mapa) {
     mapa = await cargarCache();
     // TTL null = indefinido: la caché no expira, se invalida manualmente
-    memoryCache.set(CACHE_KEY, mapa, null);
+    await memoryCache.set(CACHE_KEY, mapa, null);
     logger.info('[ROLES] Permisos cargados desde BD y guardados en caché');
   }
   return mapa;
@@ -104,7 +104,7 @@ export async function actualizarTodosLosPermisos(nuevoStore) {
   if (insertError) throw new Error(`[ROLES] Error al insertar nuevos permisos: ${insertError.message}`);
 
   // Invalidar caché para que el próximo request recargue desde BD
-  memoryCache.delete(CACHE_KEY);
+  await memoryCache.delete(CACHE_KEY);
   logger.info('[ROLES] Permisos actualizados y caché invalidada');
 }
 
@@ -134,7 +134,7 @@ export async function resetearPermisos() {
 
   if (insertError) throw new Error(`[ROLES] Error al restaurar permisos por defecto: ${insertError.message}`);
 
-  memoryCache.delete(CACHE_KEY);
+  await memoryCache.delete(CACHE_KEY);
   logger.info('[ROLES] Permisos restaurados a valores por defecto y caché invalidada');
 }
 

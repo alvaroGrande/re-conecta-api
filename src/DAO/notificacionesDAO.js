@@ -1,7 +1,7 @@
 import { supabase } from "./connection.js";
 import logger from "../logger.js";
 import { executeWithTiming } from "../utils/queryLogger.js";
-import { getCached, memoryCache } from "../utils/memoryCache.js";
+import { getCached, memoryCache } from "../utils/cache.js";
 
 /**
  * Crear una nueva notificación (extendida para múltiples canales)
@@ -57,7 +57,7 @@ export const crearNotificacion = async (notificacion) => {
     if (error) throw new Error("Error al crear notificación: " + error.message);
 
     // Invalidar caché de enviadas del emisor al crear nueva notificación
-    memoryCache.delete(`notif:enviadas:${notificacion.emisor_id}`);
+    await memoryCache.delete(`notif:enviadas:${notificacion.emisor_id}`);
 
     return data;
   });

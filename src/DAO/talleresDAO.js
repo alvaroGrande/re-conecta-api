@@ -1,7 +1,7 @@
 import {supabase} from "./connection.js";
 import logger from "../logger.js";
 import { executeWithTiming } from "../utils/queryLogger.js";
-import memoryCache from "../utils/memoryCache.js";
+import memoryCache from "../utils/cache.js";
 export const obtenerTalleres = async ({ page = 1, limit = 50 } = {}) => {
   return executeWithTiming('obtenerTalleres', async () => {
     const from = (page - 1) * limit;
@@ -48,7 +48,7 @@ export const crearTaller = async (taller) => {
     if (error) throw new Error("No se ha podido crear el taller: " + error.message);
     
     // Invalidar caché de estadísticas de talleres
-    memoryCache.delete('estadisticas_talleres');
+    await memoryCache.delete('estadisticas_talleres');
     logger.debug('Cache invalidado: nuevo taller creado');
     
     return data
@@ -65,7 +65,7 @@ export const activarTaller = async (id) => {
     if (error) throw new Error("No se ha podido activar el taller: " + error.message);
     
     // Invalidar caché de estadísticas de talleres
-    memoryCache.delete('estadisticas_talleres');
+    await memoryCache.delete('estadisticas_talleres');
     logger.debug('Cache invalidado: taller activado');
     
     return data;  // devuelve el primer objeto del array
@@ -81,7 +81,7 @@ export const desactivarTaller = async (id) => {
     if (error) throw new Error("No se ha podido desactivar el taller: " + error.message);
     
     // Invalidar caché de estadísticas de talleres
-    memoryCache.delete('estadisticas_talleres');
+    await memoryCache.delete('estadisticas_talleres');
     logger.debug('Cache invalidado: taller desactivado');
     
     return data;  // devuelve el primer objeto del array
@@ -102,7 +102,7 @@ export const editarTaller = async (id, datos) => {
       .select()
       .single();
     if (error) throw new Error('No se ha podido editar el taller: ' + error.message);
-    memoryCache.delete('estadisticas_talleres');
+    await memoryCache.delete('estadisticas_talleres');
     return data;
   });
 };
@@ -114,7 +114,7 @@ export const eliminarTaller = async (id) => {
       .delete()
       .eq('id', id);
     if (error) throw new Error('No se ha podido eliminar el taller: ' + error.message);
-    memoryCache.delete('estadisticas_talleres');
+    await memoryCache.delete('estadisticas_talleres');
     return true;
   });
 };
@@ -290,7 +290,7 @@ export const archivarTallerCancelado = async (taller, adminId, motivo = null, mo
     await supabase.from('taller_inscripciones').delete().eq('taller_id', tallerId);
     await supabase.from('talleres').delete().eq('id', tallerId);
 
-    memoryCache.delete('estadisticas_talleres');
+    await memoryCache.delete('estadisticas_talleres');
 
     return inscripciones ?? [];
   });
@@ -405,7 +405,7 @@ export const archivarTalleresExpirados = async (diasMinimos = 7) => {
       await supabase.from('taller_inscripciones').delete().eq('taller_id', taller.id);
       await supabase.from('talleres').delete().eq('id', taller.id);
 
-      memoryCache.delete('estadisticas_talleres');
+      await memoryCache.delete('estadisticas_talleres');
       archivados++;
     }
 

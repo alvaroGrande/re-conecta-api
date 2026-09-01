@@ -2,7 +2,7 @@
 import {supabase} from "./connection.js";
 import logger from "../logger.js";
 import { executeWithTiming } from "../utils/queryLogger.js";
-import memoryCache from "../utils/memoryCache.js";
+import memoryCache from "../utils/cache.js";
 export const getUserByEmail = async (email) => {
   return executeWithTiming('getUserByEmail', async () => {
     const { data, error } = await supabase
@@ -43,7 +43,7 @@ export const getAllUsers = async (filters = {}, options = {}, rolUsuario = null,
               Apellidos,
               email,
               rol,
-              ultimoInicio,
+              ultimo_inicio,
               foto_perfil
             )
           `, { count: 'exact' })
@@ -121,24 +121,58 @@ export const getAllUsers = async (filters = {}, options = {}, rolUsuario = null,
   });
 };
 
+const normalizarPerfilUsuario = (usuario = {}) => {
+  const nombre = usuario.nombre ?? usuario.name ?? '';
+  const apellidoOriginal = usuario.apellido1 ?? usuario.apellido_1 ?? usuario.Apellidos ?? usuario.apellidos ?? '';
+  const apellido2Original = usuario.apellido2 ?? usuario.apellido_2 ?? '';
+
+  const apellido1 = String(apellidoOriginal ?? '').trim();
+  const apellido2 = String(apellido2Original ?? '').trim();
+  const dni = usuario.DNI ?? usuario.dni ?? usuario.documento_identidad ?? '';
+
+  const datosNormalizados = { ...usuario };
+  if (nombre) datosNormalizados.nombre = String(nombre).trim();
+  if (apellido1) datosNormalizados.apellido1 = apellido1;
+  if (apellido2) datosNormalizados.apellido2 = apellido2;
+  if (dni) datosNormalizados.dni = String(dni).trim();
+
+  // Compatibilidad con el esquema legacy: si llega Apellidos completo lo convertimos
+  if (!datosNormalizados.apellido1 && datosNormalizados.Apellidos) {
+    const partes = String(datosNormalizados.Apellidos).trim().split(/\s+/).filter(Boolean);
+    datosNormalizados.apellido1 = partes.shift() || '';
+    datosNormalizados.apellido2 = partes.join(' ');
+  }
+
+  // No escribimos Apellidos directamente porque es un campo generado/legacy
+  delete datosNormalizados.Apellidos;
+  delete datosNormalizados.apellidos;
+  delete datosNormalizados.apellido_1;
+  delete datosNormalizados.apellido_2;
+  delete datosNormalizados.documento_identidad;
+  delete datosNormalizados.dni;
+
+  return datosNormalizados;
+};
+
 export const createUser = async (user) => {
   return executeWithTiming('createUser', async () => {
+    const datosNormalizados = normalizarPerfilUsuario(user);
     const { data, error } = await supabase
       .from('appUsers')
-      .insert([user])
+      .insert([datosNormalizados])
       .select()
       .single()
 
     if (error) throw new Error(error.message)
     
     // Invalidar caché de estadísticas de usuarios
-    memoryCache.delete('estadisticas_usuarios');
+    await memoryCache.delete('estadisticas_usuarios');
     
     // Si el usuario creado es instructor (rol 2), invalidar caché de instructores
-    if (user.rol === 2) {
-      const allKeys = memoryCache.keys();
+    if (datosNormalizados.rol === 2) {
+      const allKeys = await memoryCache.keys();
       const instructorKeys = allKeys.filter(key => key.startsWith('todos_instructores_'));
-      instructorKeys.forEach(key => memoryCache.delete(key));
+      await Promise.all(instructorKeys.map(key => memoryCache.delete(key)));
       if (instructorKeys.length > 0) {
         logger.debug(`Cache invalidado: ${instructorKeys.length} claves de instructores (nuevo instructor)`);
       }
@@ -152,9 +186,10 @@ export const createUser = async (user) => {
 
 export const updateUserById = async (id, patch) => {
   return executeWithTiming('updateUserById', async () => {
+    const datosNormalizados = normalizarPerfilUsuario(patch);
     const { data, error } = await supabase
       .from('appUsers')
-      .update(patch)
+      .update(datosNormalizados)
       .eq('id', id)
       .select()
       .single()
@@ -162,13 +197,13 @@ export const updateUserById = async (id, patch) => {
     if (error) throw new Error(error.message)
     
     // Invalidar caché de estadísticas de usuarios
-    memoryCache.delete('estadisticas_usuarios');
+    await memoryCache.delete('estadisticas_usuarios');
     
     // Si se actualizó el rol, invalidar caché de instructores
-    if (patch.rol !== undefined) {
-      const allKeys = memoryCache.keys();
+    if (datosNormalizados.rol !== undefined) {
+      const allKeys = await memoryCache.keys();
       const instructorKeys = allKeys.filter(key => key.startsWith('todos_instructores_'));
-      instructorKeys.forEach(key => memoryCache.delete(key));
+      await Promise.all(instructorKeys.map(key => memoryCache.delete(key)));
       if (instructorKeys.length > 0) {
         logger.debug(`Cache invalidado: ${instructorKeys.length} claves de instructores (cambio de rol)`);
       }
@@ -192,7 +227,7 @@ export const deleteUserById = async (id) => {
     if (error) throw new Error(error.message)
     
     // Invalidar caché de estadísticas de usuarios
-    memoryCache.delete('estadisticas_usuarios');
+    await memoryCache.delete('estadisticas_usuarios');
     logger.debug('Cache invalidado: usuario eliminado');
     
     return data
@@ -287,7 +322,7 @@ export const updateProfilePhoto = async (userId, fotoBase64) => {
 };
 
 /**
- * Actualizar ultimoInicio cuando el usuario hace login
+ * Actualizar ultimo_inicio cuando el usuario hace login
  * El trigger de la base de datos actualizará automáticamente ultima_actividad
  * @param {string} userId - ID del usuario
  * @returns {Object} Usuario actualizado
@@ -300,18 +335,18 @@ export const actualizarUltimoInicio = async (userId) => {
       const { data, error } = await supabase
         .from('appUsers')
         .update({ 
-          ultimoInicio: ahora
+          ultimo_inicio: ahora
         })
         .eq('id', userId)
         .select()
         .single();
 
       if (error) {
-        logger.error(`[USERdao] Error al actualizar ultimoInicio: ${error.message}`);
+        logger.error(`[USERdao] Error al actualizar ultimo_inicio: ${error.message}`);
         throw new Error(error.message);
       }
 
-      logger.info(`[USERdao] ultimoInicio actualizado para usuario: ${userId}`);
+      logger.info(`[USERdao] ultimo_inicio actualizado para usuario: ${userId}`);
       return data;
     } catch (error) {
       logger.error(`[USERAO] Error en actualizarUltimoInicio: ${error.message}`);

@@ -1,8 +1,10 @@
 import * as userDAO from "../DAO/userDAO.js";
+import * as contactosDAO from "../DAO/contactosDAO.js";
 import logger from "../logger.js";
 import { writeFile, readFile, unlink, mkdir } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import { validarEmail, validarDNI, validarTelefono, validarFechaNacimiento } from "../utils/validaciones.js";
 
 const CHUNK_DIR = join(tmpdir(), 'reconecta-foto-chunks');
 const MIME_PERMITIDOS = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
@@ -51,21 +53,118 @@ export const getUserById = async (req, res, next) => {
   }
 };
 
+/**
+ * POST /usuarios
+ * Crea un nuevo usuario.
+ *
+ * Reglas de negocio:
+ * - Un Coordinador (rol 2) puede crear usuarios, pero SIEMPRE con rol
+ *   Usuario (3), sin poder elegir el rol, y queda automáticamente
+ *   asociado a él mismo como coordinador (relación en usuarios_instructores).
+ * - Un Administrador (rol 1) puede crear usuarios de cualquier rol.
+ *   Si crea un Usuario (rol 3), debe indicar obligatoriamente a qué
+ *   coordinador (rol 2) se asocia mediante `coordinador_id`.
+ */
 export const createUser = async (req, res, next) => {
   try {
-    const { name, email } = req.body;
-    if (!name || !email) return res.status(400).json({ message: "Nombre y email son requeridos" });
+    const rolSolicitante = req.user.rol;
 
-    const existing = await userDAO.getUserByEmail(email);
-    if (existing && existing.length > 0) return res.status(409).json({ message: "El email ya está registrado" });
+    if (rolSolicitante !== 1 && rolSolicitante !== 2) {
+      return res.status(403).json({ message: "No tienes permisos para crear usuarios" });
+    }
 
-    // TODO: Considerar hashear contraseña antes de almacenar
-    const newUser = await userDAO.createUser(req.body);
+    const {
+      nombre, name, apellido1, apellido2, email, telefono,
+      DNI, dni, genero, fecha_nacimiento, rol, coordinador_id
+    } = req.body;
+
+    const nombreFinal = String(nombre ?? name ?? '').trim();
+    const apellido1Final = String(apellido1 ?? '').trim();
+    const apellido2Final = String(apellido2 ?? '').trim();
+    const emailFinal = String(email ?? '').trim().toLowerCase();
+    const documentoIdentidad = String(DNI ?? dni ?? '').trim();
+
+    const errores = [];
+
+    if (!nombreFinal) errores.push("El nombre es obligatorio");
+    if (!apellido1Final) errores.push("El primer apellido es obligatorio");
+    if (!emailFinal || !validarEmail(emailFinal)) errores.push("El email no es válido");
+    if (documentoIdentidad && !validarDNI(documentoIdentidad)) errores.push("El DNI/NIE no es válido");
+    if (telefono && !validarTelefono(telefono)) errores.push("El teléfono no es válido");
+    if (fecha_nacimiento && !validarFechaNacimiento(fecha_nacimiento)) errores.push("La fecha de nacimiento no es válida");
+
+    // Determinar rol final y coordinador asociado según quién crea el usuario
+    let rolFinal;
+    let coordinadorIdFinal = null;
+
+    if (rolSolicitante === 2) {
+      // Coordinador: no elige rol, siempre crea Usuarios, y se auto-asocia
+      rolFinal = 3;
+      coordinadorIdFinal = req.user.id;
+    } else {
+      // Administrador
+      const rolNumero = parseInt(rol, 10);
+      if (![1, 2, 3].includes(rolNumero)) {
+        errores.push("El rol es obligatorio y debe ser válido");
+      } else {
+        rolFinal = rolNumero;
+      }
+
+      if (rolFinal === 3) {
+        if (!coordinador_id) {
+          errores.push("Debes seleccionar el coordinador al que se asocia este usuario");
+        } else {
+          coordinadorIdFinal = coordinador_id;
+        }
+      }
+    }
+
+    if (errores.length > 0) {
+      return res.status(400).json({ message: errores[0], errores });
+    }
+
+    // Verificar que el email no esté ya registrado
+    const existing = await userDAO.getUserByEmail(emailFinal);
+    if (existing && existing.length > 0) {
+      return res.status(409).json({ message: "El email ya está registrado" });
+    }
+
+    // Verificar que el coordinador indicado existe y es realmente Coordinador
+    if (coordinadorIdFinal) {
+      const coordinador = await userDAO.getUserById(coordinadorIdFinal);
+      if (!coordinador || coordinador.rol !== 2) {
+        return res.status(400).json({ message: "El coordinador seleccionado no es válido" });
+      }
+    }
+
+    const datosUsuario = {
+      nombre: nombreFinal,
+      apellido1: apellido1Final,
+      apellido2: apellido2Final,
+      email: emailFinal,
+      telefono: telefono ? String(telefono).trim() : null,
+      dni: documentoIdentidad || null,
+      genero: genero || null,
+      fecha_nacimiento: fecha_nacimiento || null,
+      rol: rolFinal,
+      activo: true,
+      acepta_terminos: true
+    };
+
+    const newUser = await userDAO.createUser(datosUsuario);
+
+    // Asociar al coordinador correspondiente (usuarios con rol 3)
+    if (coordinadorIdFinal) {
+      await contactosDAO.asignarInstructor(newUser.id, coordinadorIdFinal, true);
+    }
+
     res.status(201).json(newUser);
   } catch (error) {
+    logger.error(`[USERS] Error al crear usuario: ${error.message}`);
     next(error);
   }
 };
+
 
 export const updateUser = async (req, res, next) => {
   try {

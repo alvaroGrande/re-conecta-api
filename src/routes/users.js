@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { getUsers, getUserById, createUser, updateUser, deleteUser, uploadProfilePhoto, uploadPhotoChunk } from "../Controllers/usersController.js";
-import { verifyToken } from '../middlewares/auth.js';
+import { verifyToken, requirePermission } from '../middlewares/auth.js';
 
 const router = Router();
 
@@ -9,7 +9,7 @@ router.use(verifyToken);
 
 router.get("/", getUsers);
 router.get("/:id", getUserById);
-router.post("/", createUser);
+router.post("/", requirePermission('usuarios:crear'), createUser);
 router.put("/:id", updateUser);
 router.delete("/:id", deleteUser);
 router.post("/:id/foto/chunk", uploadPhotoChunk); // debe ir antes de /:id/foto

@@ -1,7 +1,7 @@
 import { supabase } from "./connection.js";
 import { executeWithTiming } from "../utils/queryLogger.js";
 import logger from '../logger.js';
-import { getCached, memoryCache } from '../utils/memoryCache.js';
+import { getCached, memoryCache } from '../utils/cache.js';
 
 
 /**
@@ -81,11 +81,11 @@ export const registrarFinTarea = async (logId, datos, timestampInicio = null) =>
       
       // Invalidar cachés relacionados con tareas
       // Invalidar todas las variantes de límite (10, 20, 50, etc)
-      const allKeys = memoryCache.keys();
+      const allKeys = await memoryCache.keys();
       const keysToDelete = allKeys.filter(key => 
         key.startsWith('ultimas_ejecuciones_') || key === 'estadisticas_queries'
       );
-      keysToDelete.forEach(key => memoryCache.delete(key));
+      await Promise.all(keysToDelete.map(key => memoryCache.delete(key)));
       
       if (keysToDelete.length > 0) {
         logger.debug(`Cache invalidado: ${keysToDelete.length} claves eliminadas (tareas completadas)`);
@@ -138,11 +138,11 @@ export const registrarErrorTarea = async (logId, error, timestampInicio = null) 
       
       // Invalidar cachés relacionados con tareas
       // Invalidar todas las variantes de límite (10, 20, 50, etc)
-      const allKeys = memoryCache.keys();
+      const allKeys = await memoryCache.keys();
       const keysToDelete = allKeys.filter(key => 
         key.startsWith('ultimas_ejecuciones_') || key === 'estadisticas_queries'
       );
-      keysToDelete.forEach(key => memoryCache.delete(key));
+      await Promise.all(keysToDelete.map(key => memoryCache.delete(key)));
       
       if (keysToDelete.length > 0) {
         logger.debug(`Cache invalidado: ${keysToDelete.length} claves eliminadas (error en tarea)`);

@@ -15,7 +15,7 @@ export const JWT = {
 
 export const SUPABASE = {
   KEY : process.env.SUPABASE_KEY,
-  URL : process.env.SUPABASE_URL || 'https://uyzqigelvhjkopoyrcft.supabase.co'
+  URL : process.env.SUPABASE_URL || 'https://flyjycozhtqslsbzabis.supabase.co'
 }
 
 export const LOG_CONFIG = {

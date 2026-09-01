@@ -1,6 +1,6 @@
 import { supabase } from './connection.js';
 import { executeWithTiming } from '../utils/queryLogger.js';
-import memoryCache from '../utils/memoryCache.js';
+import memoryCache from '../utils/cache.js';
 import logger from '../logger.js';
 
 const CACHE_KEY = 'motivos_cancelacion';
@@ -12,7 +12,7 @@ const CACHE_KEY = 'motivos_cancelacion';
  */
 export const obtenerMotivosCancelacion = async () => {
   return executeWithTiming('obtenerMotivosCancelacion', async () => {
-    const cached = memoryCache.get(CACHE_KEY);
+    const cached = await memoryCache.get(CACHE_KEY);
     if (cached) return cached;
 
     const { data, error } = await supabase
@@ -24,7 +24,7 @@ export const obtenerMotivosCancelacion = async () => {
     if (error) throw new Error('Error al obtener motivos de cancelación: ' + error.message);
 
     // TTL indefinido: este catálogo rara vez cambia
-    memoryCache.set(CACHE_KEY, data, null);
+    await memoryCache.set(CACHE_KEY, data, null);
     logger.debug('Cache SET: motivos_cancelacion');
 
     return data;
@@ -32,7 +32,7 @@ export const obtenerMotivosCancelacion = async () => {
 };
 
 /** Invalida la caché (llamar tras insertar/actualizar/borrar motivos) */
-export const invalidarCacheMotivos = () => {
-  memoryCache.delete(CACHE_KEY);
+export const invalidarCacheMotivos = async () => {
+  await memoryCache.delete(CACHE_KEY);
   logger.debug('Cache invalidado: motivos_cancelacion');
 };

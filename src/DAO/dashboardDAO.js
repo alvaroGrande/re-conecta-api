@@ -1,7 +1,7 @@
 import { supabase } from "./connection.js";
 import logger from "../logger.js";
 import { executeWithTiming } from "../utils/queryLogger.js";
-import { getCached } from "../utils/memoryCache.js";
+import { getCached } from "../utils/cache.js";
 
 /**
  * Obtener estadísticas generales del dashboard
@@ -37,7 +37,7 @@ export const obtenerEstadisticasDashboard = async () => {
         supabase
           .from('appUsers')
           .select('*', { count: 'exact', head: true })
-          .gte('ultimoInicio', hace24h),
+          .gte('ultimo_inicio', hace24h),
         
         // Usuarios conectados (últimos 5 minutos)
         supabase
@@ -99,7 +99,7 @@ export const obtenerEstadisticasUsuarios = async () => {
 
       const [totalUsuarios, usuariosActivos, usuariosConectados] = await Promise.all([
         supabase.from('appUsers').select('*', { count: 'exact', head: true }),
-        supabase.from('appUsers').select('*', { count: 'exact', head: true }).gte('ultimoInicio', hace24h),
+        supabase.from('appUsers').select('*', { count: 'exact', head: true }).gte('ultimo_inicio', hace24h),
         supabase.from('appUsers').select('*', { count: 'exact', head: true }).gte('ultima_actividad', hace5min)
       ]);
 
@@ -203,17 +203,17 @@ export const obtenerActividadPorDias = async (dias = 7) => {
     // Una sola query para obtener todos los logins de los últimos N días
     const { data, error } = await supabase
       .from('appUsers')
-      .select('ultimoInicio')
-      .gte('ultimoInicio', fechaInicio.toISOString())
-      .not('ultimoInicio', 'is', null);
+      .select('ultimo_inicio')
+      .gte('ultimo_inicio', fechaInicio.toISOString())
+      .not('ultimo_inicio', 'is', null);
 
     if (error) throw new Error(error.message);
 
     // Agrupar por día en memoria
     const conteosPorDia = {};
     (data || []).forEach(usuario => {
-      if (usuario.ultimoInicio) {
-        const fecha = new Date(usuario.ultimoInicio);
+      if (usuario.ultimo_inicio) {
+        const fecha = new Date(usuario.ultimo_inicio);
         const fechaStr = fecha.toISOString().split('T')[0];
         conteosPorDia[fechaStr] = (conteosPorDia[fechaStr] || 0) + 1;
       }
@@ -249,7 +249,7 @@ export const obtenerUsuariosConectados = async () => {
 
     const { data, error } = await supabase
       .from('appUsers')
-      .select('id, nombre, Apellidos, email, rol, ultimoInicio, ultima_actividad')
+      .select('id, nombre, Apellidos, email, rol, ultimo_inicio, ultima_actividad')
       .gte('ultima_actividad', hace5min)
       .order('ultima_actividad', { ascending: false });
 

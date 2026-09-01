@@ -35,12 +35,12 @@ ANALYZE notificaciones;
 ANALYZE talleres;
 
 -- ============================================================
--- Índice en ultimoInicio (usado intensivamente en el dashboard)
--- Cubre: WHERE ultimoInicio >= fecha AND ultimoInicio IS NOT NULL
+-- Índice en ultimo_inicio (usado intensivamente en el dashboard)
+-- Cubre: WHERE ultimo_inicio >= fecha AND ultimo_inicio IS NOT NULL
 -- ============================================================
-CREATE INDEX IF NOT EXISTS idx_appusers_ultimo_inicio
-  ON "appUsers"(ultimoInicio DESC)
-  WHERE ultimoInicio IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_appusers_last_login
+  ON "appUsers"(ultimo_inicio DESC)
+  WHERE ultimo_inicio IS NOT NULL;
 
 -- Índice en ultima_actividad (usuarios conectados últimos 5 min)
 CREATE INDEX IF NOT EXISTS idx_appusers_ultima_actividad

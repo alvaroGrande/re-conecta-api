@@ -1,6 +1,6 @@
 import { supabase } from './connection.js';
 import { executeWithTiming } from '../utils/queryLogger.js';
-import { memoryCache } from '../utils/memoryCache.js';
+import { memoryCache } from '../utils/cache.js';
 
 const CHAT_GENERAL_ID = '00000000-0000-0000-0000-000000000001';
 
@@ -15,12 +15,12 @@ const _cacheKeyRecientes = (uid) => `chat:recientes:${uid}`;
 /**
  * Invalida las dos entradas de caché de un usuario.
  */
-export const invalidarCacheChatsUsuario = (usuarioIds) => {
+export const invalidarCacheChatsUsuario = async (usuarioIds) => {
   const ids = Array.isArray(usuarioIds) ? usuarioIds : [usuarioIds];
-  ids.forEach(uid => {
-    memoryCache.delete(_cacheKeyLista(uid));
-    memoryCache.delete(_cacheKeyRecientes(uid));
-  });
+  await Promise.all(ids.flatMap(uid => [
+    memoryCache.delete(_cacheKeyLista(uid)),
+    memoryCache.delete(_cacheKeyRecientes(uid)),
+  ]));
 };
 
 /**
@@ -32,7 +32,7 @@ export const invalidarCachePorChat = async (chatId) => {
     .from('chat_miembros')
     .select('usuario_id')
     .eq('chat_id', chatId);
-  if (data?.length) invalidarCacheChatsUsuario(data.map(m => m.usuario_id));
+  if (data?.length) await invalidarCacheChatsUsuario(data.map(m => m.usuario_id));
 };
 
 // ── Chats ────────────────────────────────────────────────────────────────────
@@ -46,7 +46,7 @@ export const invalidarCachePorChat = async (chatId) => {
 export const obtenerChatsDeUsuario = async (usuarioId) => {
   return executeWithTiming('obtenerChatsDeUsuario', async () => {
     const cacheKey = _cacheKeyLista(usuarioId);
-    const cached = memoryCache.get(cacheKey);
+    const cached = await memoryCache.get(cacheKey);
     if (cached !== null) return cached;
 
     // Asegurar que el usuario sea miembro del chat general
@@ -72,13 +72,13 @@ export const obtenerChatsDeUsuario = async (usuarioId) => {
     const chats = data.map(r => r.chat).filter(Boolean);
 
     // Guardar lista completa en caché
-    memoryCache.set(cacheKey, chats, CACHE_TTL_LISTA);
+    await memoryCache.set(cacheKey, chats, CACHE_TTL_LISTA);
 
     // Guardar los N más recientes en caché separada (más larga) para socket reconnect
     const recientes = [...chats]
       .sort((a, b) => new Date(b.creado_en) - new Date(a.creado_en))
       .slice(0, MAX_RECIENTES);
-    memoryCache.set(_cacheKeyRecientes(usuarioId), recientes, CACHE_TTL_LISTA * 2);
+    await memoryCache.set(_cacheKeyRecientes(usuarioId), recientes, CACHE_TTL_LISTA * 2);
 
     return chats;
   });
@@ -130,7 +130,7 @@ export const obtenerOCrearChatDirecto = async (usuarioAId, usuarioBId) => {
     if (!idsA.length) {
       const resultado = await _crearChatDirecto(usuarioAId, usuarioBId);
       // Chat nuevo → invalidar caché de ambos
-      invalidarCacheChatsUsuario([usuarioAId, usuarioBId]);
+      await invalidarCacheChatsUsuario([usuarioAId, usuarioBId]);
       return resultado;
     }
 
@@ -166,7 +166,7 @@ export const obtenerOCrearChatDirecto = async (usuarioAId, usuarioBId) => {
     }
 
     const resultado = await _crearChatDirecto(usuarioAId, usuarioBId);
-    invalidarCacheChatsUsuario([usuarioAId, usuarioBId]);
+    await invalidarCacheChatsUsuario([usuarioAId, usuarioBId]);
     return resultado;
   });
 };
@@ -227,7 +227,7 @@ export const crearChat = async ({ nombre, descripcion, es_efimero, ttl_horas, mi
     if (errMiembros) throw new Error('Error al añadir miembros: ' + errMiembros.message);
 
     // Invalidar caché de todos los miembros
-    invalidarCacheChatsUsuario(idsUnicos);
+    await invalidarCacheChatsUsuario(idsUnicos);
 
     return chat;
   });
@@ -290,7 +290,7 @@ export const añadirMiembros = async (chatId, usuarioIds) => {
     if (error) throw new Error('Error al añadir miembros: ' + error.message);
 
     // Los nuevos miembros ahora tienen este chat → invalidar su caché
-    invalidarCacheChatsUsuario(usuarioIds);
+    await invalidarCacheChatsUsuario(usuarioIds);
   });
 };
 
@@ -308,7 +308,7 @@ export const eliminarMiembro = async (chatId, usuarioId) => {
     if (error) throw new Error('Error al eliminar miembro: ' + error.message);
 
     // El usuario ya no pertenece a este chat → invalidar su caché
-    invalidarCacheChatsUsuario(usuarioId);
+    await invalidarCacheChatsUsuario(usuarioId);
   });
 };
 

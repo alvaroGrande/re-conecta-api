@@ -1,6 +1,6 @@
 import { supabase } from "./connection.js";
 import { executeWithTiming } from "../utils/queryLogger.js";
-import { getCached } from "../utils/memoryCache.js";
+import { getCached } from "../utils/cache.js";
 
 /**
  * Búsqueda global en talleres, encuestas y usuarios

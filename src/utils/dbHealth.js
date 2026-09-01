@@ -51,7 +51,7 @@ function startRetry() {
 export async function initDbHealth() {
   connected = await ping();
   if (connected) {
-    logger.info('Conexión a la base de datos: OK');
+    logger.info('Conexion a la base de datos: OK');
   } else {
     logger.error('No se pudo conectar a la base de datos. Las peticiones seran bloqueadas hasta restaurar la conexion. Reintentando cada 10s...');
     startRetry();

@@ -3,7 +3,7 @@ import { createRequire } from "module";
 import logger from "./logger.js";
 import app, { setIO } from "./app.js";
 import { setupSocketIO } from "./config/socketIO.js";
-import memoryCache from "./utils/memoryCache.js";
+import memoryCache from "./utils/cache.js";
 import { initDbHealth } from "./utils/dbHealth.js";
 
 const require = createRequire(import.meta.url);
@@ -40,17 +40,19 @@ setIO(io);
 // Exportar io para que cluster.js pueda pasarlo al scheduler
 export const getIO = () => io;
 
+// Verificar conexión a la base de datos ANTES de abrir el puerto
+const t0 = Date.now();
+await initDbHealth();
+logger.info(`DB health check: ${Date.now() - t0}ms`);
+
 // Iniciar servidor (las tareas programadas se inicializan en cluster.js)
-httpServer.listen(PORT, async () => {
+httpServer.listen(PORT, () => {
   logger.info(` Server running on http://localhost:${PORT}`);
   logger.info(` WebSocket disponible para notificaciones en tiempo real`);
 
-  // Verificar conexión a la base de datos
-  await initDbHealth();
-  
-  // Monitorear tamaño de caché cada minuto
-  setInterval(() => {
-    const stats = memoryCache.stats();
-    logger.info(`Cache Stats - Keys: ${stats.keys}, Size: ${stats.size} bytes, Hits: ${stats.hits}, Misses: ${stats.misses}`);
-  }, 30 * 1000); // 30 segundos
+  // Monitorear tamaño de caché cada 30 segundos
+  setInterval(async () => {
+    const stats = await memoryCache.stats();
+    logger.info(`Cache Stats - Entries: ${stats.entries}, Size: ${stats.size}`);
+  }, 30 * 1000);
 });

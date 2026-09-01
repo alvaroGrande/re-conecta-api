@@ -20,7 +20,7 @@ export const login = async (req, res, next) => {
             return res.status(401).json({ ok : false, message: 'Credenciales inválidas.' });
         }
         
-        // Actualizar ultimoInicio y ultima_actividad
+        // Actualizar ultimo_inicio y ultima_actividad
         await userDAO.actualizarUltimoInicio(user[0].id);
         
         // Obtener el usuario actualizado

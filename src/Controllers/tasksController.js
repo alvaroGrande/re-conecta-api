@@ -1,7 +1,7 @@
 import * as tasksDAO from '../DAO/tasksDAO.js';
 import { ejecutarTareaManual } from '../services/tasksScheduler.js';
 import logger from '../logger.js';
-import { memoryCache } from '../utils/memoryCache.js';
+import { memoryCache, cacheDriver } from '../utils/cache.js';
 
 /**
  * Obtener últimas ejecuciones de tareas programadas
@@ -160,11 +160,11 @@ export const getQueriesMasLentas = async (req, res, next) => {
  */
 export const getCacheStats = async (req, res, next) => {
   try {
-    const stats = memoryCache.stats();
+    const stats = await memoryCache.stats();
     
     res.json({
       enabled: true,
-      type: 'memory',
+      type: cacheDriver,
       ...stats,
       ttl: '5 minutos',
       description: 'Caché en memoria para queries lentas'
@@ -185,8 +185,8 @@ export const getCacheDetails = async (req, res, next) => {
       });
     }
 
-    const details = memoryCache.getDetails();
-    const stats = memoryCache.stats();
+    const details = await memoryCache.getDetails();
+    const stats = await memoryCache.stats();
     
     res.json({ 
       summary: {
@@ -218,7 +218,7 @@ export const getCacheEntryData = async (req, res, next) => {
       });
     }
 
-    const data = memoryCache.get(key);
+    const data = await memoryCache.get(key);
     
     if (data === null) {
       logger.warn(`Entrada '${key}' no encontrada en el caché`);
@@ -250,14 +250,14 @@ export const deleteCacheEntry = async (req, res, next) => {
 
     const { key } = req.params;
     
-    if (!memoryCache.has(key)) {
+    if (!await memoryCache.has(key)) {
       return res.status(404).json({ 
         success: false,
         message: 'Entrada no encontrada en el caché' 
       });
     }
 
-    memoryCache.delete(key);
+    await memoryCache.delete(key);
     
     logger.info(`Entrada de caché '${key}' eliminada por usuario ${req.user.id}`);
     
@@ -282,8 +282,8 @@ export const clearCache = async (req, res, next) => {
       });
     }
 
-    const statsBefore = memoryCache.stats();
-    memoryCache.clear();
+    const statsBefore = await memoryCache.stats();
+    await memoryCache.clear();
     
     logger.info(`Caché limpiado manualmente por usuario ${req.user.id}`);
     

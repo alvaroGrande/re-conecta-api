@@ -1,6 +1,6 @@
 import { supabase } from "./connection.js";
 import { executeWithTiming } from "../utils/queryLogger.js";
-import { getCached } from "../utils/memoryCache.js";
+import { getCached } from "../utils/cache.js";
 
 /**
  * Obtener el instructor principal de un usuario
@@ -182,7 +182,7 @@ export const obtenerUsuariosCoordinados = async (instructorId, page = 1, limit =
   // Query con paginación y búsqueda - filtrar solo usuarios con rol 3 (usuarios normales)
   let query = supabase
     .from('appUsers')
-    .select('id, nombre, Apellidos, email, rol, foto_perfil, ultimoInicio', { count: 'exact' })
+    .select('id, nombre, Apellidos, email, rol, foto_perfil, ultimo_inicio', { count: 'exact' })
     .in('id', usuariosIds)
     .eq('rol', 3); // Solo usuarios normales, no instructores
 
